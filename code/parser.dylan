@@ -25,9 +25,11 @@ define constant $none :: <none> = make(<none>);
 
 define class <coil-parser> (<object>)
   // Source is for error reporting only.  It could be a file name, a stream, etc.
-  slot input-source :: <object>, required-init-keyword: source:;
+  constant slot input-source :: <object>, required-init-keyword: source:;
+
   // Text is the entire original coil source text.
-  slot input-text :: <string> = "";
+  constant slot input-text :: <string> = "";
+
   // Index points to the next character to be read by "consume".
   slot current-index :: <integer> = 0;
 

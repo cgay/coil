@@ -11,7 +11,6 @@ define library coil
   use io;
   use regular-expressions;
   use simple-parser;
-  use string-extensions;
   use system;
   use uncommon-dylan;
 
@@ -41,23 +40,20 @@ define module %coil
   use regular-expressions;
   use simple-parser;
   use streams;
-  use string-hacking,
-    import: { <case-insensitive-character-set> };
   use table-extensions,
-    import: { string-hash, <hash-state> };
+    import: { string-hash };
   use uncommon-dylan;
 
   // Parser
   export
     <coil-parser>,
     parse-any,
-    parse-inheritance,
     parse-list,
     parse-number,
     parse-string,
     parse-struct,
-    next-char,
-    peek-char;
+    lookahead,
+    consume;
 end module %coil;
 
 
