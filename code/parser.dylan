@@ -1,7 +1,16 @@
 Module: %coil
+Synopsis: Ad-hoc recursive descent parser for coil configs
 Author: Carl Gay
 Copyright: Copyright (c) 2010 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
+
+define constant $key-regex :: <regex>
+  = compile-regex("-*[a-zA-Z_][\\w-]*");
+
+define constant $path-regex :: <regex>
+  = compile-regex(format-to-string("(@|\\.+)?%s(\\.%s)*",
+                                   $key-regex.regex-pattern,
+                                   $key-regex.regex-pattern));
 
 /// Synopsis: All coil errors are subclasses of this.
 define class <coil-error> (<format-string-condition>, <error>)
@@ -11,17 +20,20 @@ end;
 define class <coil-parse-error> (<coil-error>)
 end;
 
+define class <none> (<object>) end;
+define constant $none :: <none> = make(<none>);
 
 define class <coil-parser> (<object>)
   // Source is for error reporting only.  It could be a file name, a stream, etc.
   slot input-source :: <object>, required-init-keyword: source:;
   // Text is the entire original coil source text.
   slot input-text :: <string> = "";
-  // Index points to the next character to be read by next-char.
+  // Index points to the next character to be read by "consume".
   slot current-index :: <integer> = 0;
-  // Line and column are for error reporting.  They are maintained by next-char.
-  slot line-number :: <integer> = 0, init-keyword: line:;
-  slot column-number :: <integer> = 0, init-keyword: column:;
+
+  // Line and column are for error reporting.  They are maintained by "consume".
+  slot line-number :: <integer> = 1, init-keyword: line:;
+  slot column-number :: <integer> = 1, init-keyword: column:;
 end class <coil-parser>;
 
 
@@ -29,11 +41,11 @@ end class <coil-parser>;
 ///           'args' as the message.  If the current source location is known
 ///           it is prefixed to the message.
 define method parse-error
-    (parser :: <coil-parser>, format-string, #rest args)
-  let context = iff(parser.line-number = -1,
+    (p :: <coil-parser>, format-string, #rest args)
+  let context = iff(p.line-number = -1,
                     "",
                     format-to-string("<%d:%d> ",
-                                     parser.line-number, parser.column-number));
+                                     p.line-number, p.column-number));
   error(make(<coil-parse-error>,
              format-string: concatenate(context, format-string),
              format-arguments: args));
@@ -43,10 +55,10 @@ end method parse-error;
 /// Synopsis: Parse coil formatted text from the given 'source'.
 ///           This is the main user-visible entry point for parsing.
 define open generic parse-coil
-    (source :: <object>) => (coil :: <ordered-string-table>);
+    (source :: <object>) => (coil :: <struct>);
 
 define method parse-coil
-    (source :: <locator>) => (coil :: <ordered-string-table>)
+    (source :: <locator>) => (coil :: <struct>)
   with-open-file (stream = source, direction: input:)
     parse-struct(make(<coil-parser>,
                       source: as(<string>, source),
@@ -55,150 +67,217 @@ define method parse-coil
 end method parse-coil;
 
 define method parse-coil
-    (source :: <stream>) => (coil :: <ordered-string-table>)
+    (source :: <stream>) => (coil :: <struct>)
   parse-struct(make(<coil-parser>,
                     source: source,
-                    text: read-to-end(stream)))
+                    text: read-to-end(source)))
 end method parse-coil;
 
 
 /// Synopsis: parse and return any valid coil object.  A struct, list,
-///     integer, float, string, boolean, or None.  This is used for
-///     parsing list elements and struct values, for example.
-define method parse-coil
-    (parser :: <coil-parser>)
+///           integer, float, string, boolean, or None.  This is used for
+///           parsing list elements and struct values, for example.
+define method parse-any
+    (p :: <coil-parser>)
  => (object :: <object>)
-  eat-whitespace-and-comments(parser);
-  let char = peek-char(parser);
-  if (char = '"' | char = '\'')
-    next-char(parser);
-    parse-string(parser, char)
-  elseif (char = '{')
-    next-char(parser);
-    parse-struct(parser)
-  elseif (char = '[')
-    next-char(parser);
-    parse-list(parser)
-  elseif (member?(char, "0123456789"))
-    parse-number(parser)
-  elseif (char = 'T')
-    expect(parser, "True");
-    #t
-  elseif (char = 'F')
-    expect(parser, "False");
-    #f
-  elseif (char = 'N')
-    expect(parser, "None");
-    $none
-  else
-    parse-error(parser, "Unexpected input starting with %c.", char)
-  end
-end method parse-coil;
+  eat-whitespace-and-comments(p);
+  let char = p.lookahead;
+  select (char by member?)
+    "'\"" =>
+      p.consume;
+      parse-string(p, char);
+    "{" =>
+      p.consume;
+      parse-struct(p);
+    "[" =>
+      p.consume;
+      parse-list(p);
+    "0123456789" =>
+      parse-number(p);
+    "T" =>
+      expect(p, "True");
+      #t;
+    "F" =>
+      expect(p, "False");
+      #f;
+    "N" =>
+      expect(p, "None");
+      $none;
+    otherwise =>
+      parse-error(p, "Unexpected input starting with %c.", char);
+  end select
+end method parse-any;
 
 /// Synopsis: Return the next unread input character, or #f if at end.
-define method peek-char
-    (parser :: <coil-parser>, #key offset :: <integer> = 0)
+define method lookahead
+    (p :: <coil-parser>, #key offset :: <integer> = 0)
  => (char :: false-or(<character>))
-  let text = parser.input-text;
-  let idx = parser.current-index;
-  if (idx + index >= text.size)
+  let text = p.input-text;
+  let idx = p.current-index;
+  if (idx + offset >= text.size)
     #f
   else
     text[idx + offset]
   end
-end method peek-char;
+end method lookahead;
 
 /// Synopsis: Consume and return the next unread input character.  If at
 ///           end-of-input signal <coil-parse-error>.
-define method next-char
-    (parser :: <coil-parser>)
+define method consume
+    (p :: <coil-parser>)
  => (char :: false-or(<character>))
-  let char = peek-char(parser);
+  let char = p.lookahead;
   if (char)
-    inc!(parser.current-index);
+    inc!(p.current-index);
+    iff(char = '\n',
+        inc!(p.line-number),
+        inc!(p.column-number));
     char
   else
-    parse-error("End of coil text encountered.");
+    parse-error(p, "End of coil text encountered.");
   end;
-end method next-char;
+end method consume;
 
+define method expect
+    (p :: <coil-parser>, string :: <string>) => ()
+  for (char in string)
+    if (char ~= p.consume)
+      parse-error(p, "Expected %=", string);
+    end;
+  end;
+end method expect;
+
+define method eat-whitespace-and-comments
+    (p :: <coil-parser>) => ()
+  iterate loop ()
+    if (p.lookahead = '#')
+      eat-comment(p);
+      loop()
+    elseif (member?(p.lookahead, " \t\n\r"))
+      p.consume;
+      loop()
+    end;
+  end;
+end method eat-whitespace-and-comments;
+
+define method eat-comment
+    (p :: <coil-parser>) => ()
+  while (p.consume ~= '\n')
+  end;
+end method eat-comment;
+
+// Note: Keys may start with any number of -'s but must be followed by a
+//       letter.
+define method parse-key
+    (p :: <coil-parser>) => (key :: <string>)
+  let match = regex-search($key-regex, p.input-text,
+                           start: p.current-index);
+  if (match)
+    let (key, _, epos) = match-group(match, 0);
+    p.current-index := epos;
+    key
+  else
+    parse-error(p, "Struct key expected");
+  end
+end method parse-key;
 
 /// Synopsis: Parse a struct.  The opening '{' has already been eaten.
 ///     This is where parsing begins for a new file.
 define method parse-struct
-    (parser :: <coil-parser>)
- => (struct :: <ordered-string-table>)
-  let struct = make(<ordered-string-table>);
+    (p :: <coil-parser>) => (struct :: <struct>)
+  let struct = make(<struct>);
   iterate loop ()
-    eat-whitespace-and-comments(parser);
-    let char = peek(parser);
+    eat-whitespace-and-comments(p);
+    let char = p.lookahead;
     if (char = '}')
-      next-char(parser);
-      struct
-    elseif (member?(char, $key-start-charset))
-      let key = parse-key(parser);
-      if (key[0] = '@')
-        select (key by \=)
-          "@extends" =>
-            let super = parse-path(parser);
-            extend(struct, super);
-          "@file" =>
-            let filename = parse-coil(parser);
+      p.consume;
+    else
+      if (char = '@')
+        p.consume;
+        select (p.lookahead)
+          'e' =>
+            expect(p, "extends:");
+            // TODO: Need to find out whether these can be forward references
+            //       or not.  If yes, then insert the reference into the struct
+            //       in order with a unique key and resolve it later.
+            parse-reference(p);
+          'f' =>
+            expect(p, "file:");
+            let filename = parse-any(p);
             if (instance?(filename, <string>))
-              let super = parse-coil(filename);
-              extend(struct, super);
+              map-into(struct, identity, parse-coil(filename));
             else
-              parse-error("Expected a filename for @file but got %=", filename);
+              parse-error(p, "Expected a filename for @file but got %=",
+                          filename);
             end;
           otherwise =>
-            parse-error("Unrecognized struct key syntax: %=", key);
+            parse-error(p, "Unrecognized struct key syntax");
         end select;
-        loop();
       else
-        struct[key] := value;
-        loop();
-      end if;
-    else
-      parse-error(parser, "Invalid struct key starting with %c.", char);
+        struct[parse-key(p)] := parse-any(p);
+      end;
+      loop();
     end if;
   end iterate;
   struct
 end method parse-struct;
 
+/// Synopsis: A <reference> which will be resolved during a second pass, after the
+///           entire configuration has been parsed.
+define class <reference> (<object>)
+  constant slot reference-path :: <string>,
+    required-init-keyword: path:;
+end;
+
+/// Synopsis: Parse a reference to another element in the configuration.
+///           For example, "@root.foo" or "...b".
+define method parse-reference
+    (p :: <coil-parser>) => (ref :: <reference>)
+  eat-whitespace-and-comments(p);
+  let match = regex-search($path-regex, p.input-text, start: p.current-index);
+  if (match)
+    let (path, _, epos) = match-group(match, 0);
+    p.current-index := epos;
+    make(<reference>, path: path)
+  else
+    parse-error(p, "Reference path expected");
+  end
+end method parse-reference;
+
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///     The opening '[' has already been eaten.
 define method parse-list
-    (parser :: <coil-parser>)
+    (p :: <coil-parser>)
  => (list :: <vector>)
   let list = make(<stretchy-vector>);
   iterate loop ()
-    eat-whitespace-and-comments(parser);
-    if (peek-char(parser) ~= ']')
+    eat-whitespace-and-comments(p);
+    if (p.lookahead ~= ']')
       // TODO: This allows structs inside lists but the Python version doesn't.
       //       This will mess with relative path references.
-      add!(list, parse-coil(parser));
+      add!(list, parse-any(p));
       loop()
     end
   end;
-  expect(parser, ']');
+  expect(p, "]");
   list
 end method parse-list;
 
-/// Synopsis: Parse an integer or float (digits on both sides of the '.' reqired)
+/// Synopsis: Parse an integer or float (digits on both sides of the '.' required)
 define method parse-number
-    (parser :: <coil-parser>)
+    (p :: <coil-parser>)
  => (number :: <number>)
+  // TODO: negative numbers
   let chars = make(<stretchy-vector>);
   iterate loop ()
-    let char = peek-char(parser);
+    let char = p.lookahead;
     if (member?(char, ".0123456789"))
-      next-char(parser);
+      p.consume;
       add!(chars, char);
       loop()
     end;
   end;
-  let string = make(<string>, size: chars.size);
-  map-into!(string, chars);
+  let string = map-as(<string>, identity, chars);
   if (member?('.', string))
     string-to-float(string)
   else
@@ -215,19 +294,19 @@ end method parse-number;
 ///                  to eat before reading the actual string.  The end
 ///                  must match this character.
 define method parse-string
-    (parser :: <coil-parser>, start-char :: one-of('"', '\''))
+    (p :: <coil-parser>, start-char :: one-of('"', '\''))
  => (string :: <string>)
-  let char2 = next-char(parser);
-  let char3 = peek-char(parser, index: 1);
+  let char2 = p.consume;
+  let char3 = lookahead(p, offset: 1);
   let multi-line? = (start-char = char2 = char3);
   if (multi-line?)
-    next-char(parser);
-    next-char(parser);
+    p.consume;
+    p.consume;
   end;
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
-    let char = next-char(parser);
-    if (char = escape-char)
+    let char = p.consume;
+    if (char = '\\')
       if (escaped?)
         add!(chars, char);
         loop(#f);
@@ -236,9 +315,9 @@ define method parse-string
       end;
     elseif (char = start-char)
       if (multi-line?)
-        let ch2 = next-char(parser);
+        let ch2 = p.consume;
         if (ch2 = start-char)
-          let ch3 = next-char(parser);
+          let ch3 = p.consume;
           if (ch3 ~= start-char)
             add!(chars, start-char);
             add!(chars, start-char);
@@ -251,7 +330,5 @@ define method parse-string
       end;
     end if;
   end iterate;
-  let string = make(<string>, size: chars.size);
-  map-into!(string, chars);
-  string
+  map-as(<string>, identity, chars)
 end method parse-string;

@@ -17,6 +17,7 @@ define module coil-test-suite
   use standard-io;
   use streams;
   use testworks;
+  use coil;
   use %coil;
 end module coil-test-suite;
 
