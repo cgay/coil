@@ -63,11 +63,13 @@ end method element-setter;
 define class <ordered-string-table> (<ordered-table>)
 end;
 
+// This must be consistent with table-protocol.
 define method key-test
     (t :: <ordered-string-table>) => (test :: <function>)
   \=
 end;
 
+// The first value returned must be consistent with key-test.
 define method table-protocol
     (table :: <ordered-string-table>)
  => (test :: <function>, hash :: <function>);
@@ -75,6 +77,53 @@ define method table-protocol
 end method table-protocol;
 
 
-// This is merely for consistency with Coil terminology.
-define constant <struct> = <ordered-string-table>;
+/// Synopsis: The core Coil data structure.  Back links to the parent struct
+///           are maintained so that absolute references (i.e., @root...)
+///           can be determined.
+define open class <struct> (<ordered-string-table>)
+    slot struct-parent :: false-or(<struct>) = #f,
+      init-keyword: parent:;
+end class <struct>;
+
+/// Synopsis: Retrieve an attribute value from a <struct>.
+///
+/// Arguments:
+///     struct - A <struct>
+///     key    - The name of the attribute to retrieve.  This may be any
+///              valid coil path name.  e.g., foo, @root.bar.foo, bar.foo
+///              If @root is part of the path then first the root struct
+///              is looked up via the parent chain and then the path is
+///              followed back down to the target.
+///
+define method element
+    (struct :: <struct>, key :: <string>, #key default = $unfound)
+ => (object)
+  if (member?('.', key))
+    iterate loop (struct = struct,
+                  parts = as(<list>, split(key, '.')),
+                  seen = #())
+      let subkey = parts.head;
+      if (subkey = "@root" & ~empty?(seen))
+        error("@root may only appear at the beginning of a coil path: %s", key);
+      end;
+      let value = element(struct, subkey, default: default);
+      if (parts.size = 1)
+        value
+      elseif (~instance?(value, <struct>))
+        error("%s is an invalid reference because %s does not name a struct.",
+              key, join(reverse(seen), "."));
+      else
+        loop(value, parts.tail, pair(subkey, seen))
+      end
+    end
+  elseif (key = "@root")
+    iterate loop (struct = struct)
+      iff(struct.struct-parent,
+          loop(struct.struct-parent),
+          struct)
+    end
+  else
+    next-method()
+  end
+end method element;
 

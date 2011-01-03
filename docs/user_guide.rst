@@ -156,11 +156,13 @@ When inheriting values from another struct with ``@extends``, ``@file``,
 etc. unwanted attributes can be deleted by prefixing the name with a
 '~'. So if "sub" should not contain the attribute x::
 
-    base: {x: 1  y: 2}
+    base: {x: 1  y: 2 z: { a: 3 b: 4 } }
     sub: {
         @extends: ..base
-        ~x  # sub now has no attribute "x"
+        ~x    # sub now has no attribute "x"
+	~z.a  # sub.z now has only attribute "b"
     }
+
 
 Updating vs. Replacing Structs
 ------------------------------

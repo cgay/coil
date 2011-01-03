@@ -44,10 +44,7 @@ end class <coil-parser>;
 ///           it is prefixed to the message.
 define method parse-error
     (p :: <coil-parser>, format-string, #rest args)
-  let context = iff(p.line-number = -1,
-                    "",
-                    format-to-string("<%d:%d> ",
-                                     p.line-number, p.column-number));
+  let context = format-to-string("<%d:%d> ", p.line-number, p.column-number);
   error(make(<coil-parse-error>,
              format-string: concatenate(context, format-string),
              format-arguments: args));
@@ -126,14 +123,16 @@ end method lookahead;
 /// Synopsis: Consume and return the next unread input character.  If at
 ///           end-of-input signal <coil-parse-error>.
 define method consume
-    (p :: <coil-parser>)
- => (char :: false-or(<character>))
+    (p :: <coil-parser>) => (char :: false-or(<character>))
   let char = p.lookahead;
   if (char)
     inc!(p.current-index);
-    iff(char = '\n',
-        inc!(p.line-number),
-        inc!(p.column-number));
+    if (char = '\n')
+      inc!(p.line-number);
+      p.column-number := 1;
+    else
+      inc!(p.column-number);
+    end;
     char
   else
     parse-error(p, "End of coil text encountered.");
@@ -184,17 +183,22 @@ define method parse-key
 end method parse-key;
 
 /// Synopsis: Parse a struct.  The opening '{' has already been eaten.
-///     This is where parsing begins for a new file.
+///           This is where parsing begins for a new file.
 define method parse-struct
     (p :: <coil-parser>) => (struct :: <struct>)
   let struct = make(<struct>);
   iterate loop ()
     eat-whitespace-and-comments(p);
-    let char = p.lookahead;
-    if (char = '}')
-      p.consume;
-    else
-      if (char = '@')
+    select (p.lookahead)
+      '}' =>
+        p.consume;    // done parsing struct
+      '~' =>
+        p.consume;
+        let path = parse-path(p);
+        todo; // deletion
+        loop();
+      '@' =>
+        // TODO: Separate this into a parse-inheritance method
         p.consume;
         select (p.lookahead)
           'e' =>
@@ -202,7 +206,7 @@ define method parse-struct
             // TODO: Need to find out whether these can be forward references
             //       or not.  If yes, then insert the reference into the struct
             //       in order with a unique key and resolve it later.
-            parse-reference(p);
+            parse-path(p);
           'f' =>
             expect(p, "file:");
             let filename = parse-any(p);
@@ -213,16 +217,25 @@ define method parse-struct
                           filename);
             end;
           otherwise =>
-            parse-error(p, "Unrecognized struct key syntax");
+            parse-error(p, "Unrecognized special attribute: %=", todo);
         end select;
-      else
+        loop();
+      otherwise =>
         struct[parse-key(p)] := parse-any(p);
-      end;
-      loop();
-    end if;
+        loop();
+    end;
   end iterate;
   struct
 end method parse-struct;
+
+/// Synopsis: Parse the reference starting with the next token and delete it
+///           from the given struct.
+// TODO: Document that deletions can only reference something 
+//       outside the struct currently being parsed.
+define method parse-deletion
+    (p :: <coil-parser>)
+  todo
+end;
 
 /// Synopsis: A <reference> which will be resolved during a second pass, after the
 ///           entire configuration has been parsed.
@@ -233,7 +246,7 @@ end;
 
 /// Synopsis: Parse a reference to another element in the configuration.
 ///           For example, "@root.foo" or "...b".
-define method parse-reference
+define method parse-path
     (p :: <coil-parser>) => (ref :: <reference>)
   eat-whitespace-and-comments(p);
   let match = regex-search($path-regex, p.input-text, start: p.current-index);
@@ -244,7 +257,7 @@ define method parse-reference
   else
     parse-error(p, "Reference path expected");
   end
-end method parse-reference;
+end method parse-path;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///     The opening '[' has already been eaten.

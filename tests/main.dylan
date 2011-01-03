@@ -4,6 +4,12 @@ Copyright: Copyright (c) 2010 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 
+define suite coil-test-suite ()
+  suite parser-test-suite;
+  suite struct-test-suite;
+  test test-ordered-table-fip;
+end;
+
 /// Synopsis: Make sure that the element-setter of the forward-iteration-protocol
 ///           for
 define test test-ordered-table-fip ()
@@ -24,12 +30,6 @@ define test test-ordered-table-fip ()
   check-equal("current element set", current-element(t2, initial-state), 10);
 end test test-ordered-table-fip;
 
-
-define suite coil-test-suite ()
-  suite parser-test-suite;
-  suite struct-test-suite;
-  test test-ordered-table-fip;
-end;
 
 define method main () => ()
   let filename = locator-name(as(<file-locator>, application-name()));

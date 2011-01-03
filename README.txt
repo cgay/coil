@@ -3,9 +3,12 @@ Coil: A Configuration Library
 
 This directory contains a Dylan re-implementation of the Python COIL
 configuration library.  Although the code is completely new, it is
-intended to be 100% compatible with the Python library such that files
+intended to be compatible with the Python library such that files
 written by one implementation should be readable in the other.
-Therefore, the documentation remains largely unchanged.
+Therefore, the documentation remains largely unchanged.  Obviously,
+Python-specific features such as @package do not work in Dylan, but,
+for example, the syntax for booleans remains "True" and "False" rather
+than switching to the more Dylan-like #t and #f.
 
 Introduction
 ============
