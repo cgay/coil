@@ -1,7 +1,7 @@
 Module: %coil
 Synopsis: An ordered table class to represent Coil structs.
 Author: Carl Gay
-Copyright: Copyright (c) 2010 Carl L Gay.  All rights reserved.
+Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 /// Synopsis: A table that keeps track of the order in which elements
@@ -9,6 +9,7 @@ License:   See LICENSE.txt in this distribution for details.
 ///           Iteration uses insertion order.
 ///
 define open class <ordered-table> (<table>)
+  // TODO: This should be a doubly-linked list so that deletion is cheaper.
   constant slot key-sequence :: <stretchy-vector> = make(<stretchy-vector>);
 end;
 
@@ -23,12 +24,12 @@ define method forward-iteration-protocol
          c.size,             // limit
          // next state
          method (t :: <ordered-table>, index :: <integer>) => (state :: <integer>)
-          index + 1
+           index + 1
          end,
          // finished-state?
          method (t :: <ordered-table>, state :: <integer>, limit :: <integer>)
              => (finished? :: <boolean>)
-          state = limit
+           state = limit
          end,
          // current-key
          method (t :: <ordered-table>, state :: <integer>) => (key :: <object>)
@@ -52,10 +53,10 @@ end method forward-iteration-protocol;
 define method element-setter
     (new-value :: <object>, table :: <ordered-table>, key :: <object>)
  => (new-value :: <object>)
-  next-method();
-  if (~key-exists?(key, table))
+  if (~key-exists?(table, key))
     add!(table.key-sequence, key);
   end;
+  next-method();
   new-value
 end method element-setter;
 
@@ -126,4 +127,53 @@ define method element
     next-method()
   end
 end method element;
+
+
+//// Outputting coil
+
+define open generic write-coil
+    (stream :: <stream>, coil-data) => ();
+
+define method write-coil
+    (stream :: <stream>, struct :: <struct>) => ()
+  printing-logical-block (stream, prefix: "{", suffix: "}")
+    for (value keyed-by key in struct)
+      write-coil(stream, value);
+    end;
+  end;
+end;
+
+define method write-coil
+    (stream :: <stream>, seq :: <sequence>) => ()
+  printing-logical-block (stream, prefix: "[", suffix: "]")
+    for (value in seq)
+      write-coil(stream, value);
+    end;
+  end;
+end;
+
+define method write-coil
+    (stream :: <stream>, int :: <integer>) => ()
+  write(stream, integer-to-string(int));
+end;
+
+define method write-coil
+    (stream :: <stream>, float :: <float>) => ()
+  write(stream, float-to-string(float));
+end;
+
+define constant $newline-regex :: <regex> = compile-regex("\r|\r\n|\n");
+
+define method write-coil
+    (stream :: <stream>, string :: <string>) => ()
+  if (member?('\n', string))
+    printing-logical-block(stream, prefix: "\"\"\"", suffix: "\"\"\"")
+      for (line in split(string, $newline-regex))
+        write(stream, line);
+      end;
+    end;
+  else
+    format(stream, "%=", string);
+  end;
+end;
 

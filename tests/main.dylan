@@ -17,6 +17,8 @@ define test test-ordered-table-fip ()
   t["foo"] := 1;
   t["bar"] := 2;
   t["baz"] := 3;
+  check-equal("key-sequence has 3 elements", t.key-sequence.size, 3);
+
   let t2 = make(<struct>);
   map-into(t2, method(x) x + 1 end, t);
   check-equal("foo", t2["foo"], 2);

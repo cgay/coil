@@ -1,8 +1,16 @@
 Module: %coil
 Synopsis: Ad-hoc recursive descent parser for coil configs
 Author: Carl Gay
-Copyright: Copyright (c) 2010 Carl L Gay.  All rights reserved.
+Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
+
+// TODO: track struct parents
+
+define constant $whitespace :: <string>
+  = " \t\n\r";
+
+define constant $token-terminators :: <string>
+  = concatenate($whitespace, "}]\"");
 
 define constant $key-regex :: <regex>
   = compile-regex("-*[a-zA-Z_][\\w-]*");
@@ -76,6 +84,9 @@ end method parse-coil;
 /// Synopsis: parse and return any valid coil object.  A struct, list,
 ///           integer, float, string, boolean, or None.  This is used for
 ///           parsing list elements and struct values, for example.
+///           Note that this may only be called when an ENTIRE OBJECT is
+///           expected.  That specifically excludes parsing a path.
+///
 define method parse-any
     (p :: <coil-parser>)
  => (object :: <object>)
@@ -91,7 +102,7 @@ define method parse-any
     "[" =>
       p.consume;
       parse-list(p);
-    "0123456789" =>
+    "-0123456789" =>
       parse-number(p);
     "T" =>
       expect(p, "True");
@@ -141,9 +152,12 @@ end method consume;
 
 define method expect
     (p :: <coil-parser>, string :: <string>) => ()
+  let start = p.current-index;
   for (char in string)
     if (char ~= p.consume)
-      parse-error(p, "Expected %=", string);
+      parse-error(p, "Expected %= but got %=",
+                  string,
+                  copy-sequence(p.input-text, start: start, end: p.current-index));
     end;
   end;
 end method expect;
@@ -154,18 +168,29 @@ define method eat-whitespace-and-comments
     if (p.lookahead = '#')
       eat-comment(p);
       loop()
-    elseif (member?(p.lookahead, " \t\n\r"))
+    elseif (member?(p.lookahead, $whitespace))
       p.consume;
       loop()
     end;
   end;
-end method eat-whitespace-and-comments;
+end;
 
+/// Synopsis: Consume until not looking at a whitespace char.
+///
+define method eat-whitespace
+    (p :: <coil-parser>) => ()
+  while (member?(p.lookahead, $whitespace))
+    p.consume;
+  end;
+end;
+
+/// Synopsis: Consume a comment that starts with '#' and ends with '\n'.
+///
 define method eat-comment
     (p :: <coil-parser>) => ()
   while (p.consume ~= '\n')
   end;
-end method eat-comment;
+end;
 
 // Note: Keys may start with any number of -'s but must be followed by a
 //       letter.
@@ -195,10 +220,9 @@ define method parse-struct
       '~' =>
         p.consume;
         let path = parse-path(p);
-        todo; // deletion
+        todo-deletion;
         loop();
       '@' =>
-        // TODO: Separate this into a parse-inheritance method
         p.consume;
         select (p.lookahead)
           'e' =>
@@ -207,6 +231,7 @@ define method parse-struct
             //       or not.  If yes, then insert the reference into the struct
             //       in order with a unique key and resolve it later.
             parse-path(p);
+            todo-extend;
           'f' =>
             expect(p, "file:");
             let filename = parse-any(p);
@@ -217,7 +242,7 @@ define method parse-struct
                           filename);
             end;
           otherwise =>
-            parse-error(p, "Unrecognized special attribute: %=", todo);
+            parse-error(p, "Unrecognized special attribute");
         end select;
         loop();
       otherwise =>
@@ -231,10 +256,10 @@ end method parse-struct;
 /// Synopsis: Parse the reference starting with the next token and delete it
 ///           from the given struct.
 // TODO: Document that deletions can only reference something 
-//       outside the struct currently being parsed.
+//       inside the struct currently being parsed.
 define method parse-deletion
     (p :: <coil-parser>)
-  todo
+  todo-deletion
 end;
 
 /// Synopsis: A <reference> which will be resolved during a second pass, after the
@@ -260,7 +285,7 @@ define method parse-path
 end method parse-path;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
-///     The opening '[' has already been eaten.
+///           The opening '[' has already been eaten.
 define method parse-list
     (p :: <coil-parser>)
  => (list :: <vector>)
@@ -279,17 +304,33 @@ define method parse-list
 end method parse-list;
 
 /// Synopsis: Parse an integer or float (digits on both sides of the '.' required)
+///
 define method parse-number
     (p :: <coil-parser>)
  => (number :: <number>)
-  // TODO: negative numbers
   let chars = make(<stretchy-vector>);
+  if (p.lookahead = '-')
+    add!(chars, p.consume);
+  end;
+  if (~member?(p.lookahead, "0123456789"))
+    parse-error(p, "Invalid number: Digit expected but got %c",
+                p.lookahead);
+  end;
   iterate loop ()
     let char = p.lookahead;
-    if (member?(char, ".0123456789"))
+    if (member?(char, "0123456789"))
       p.consume;
       add!(chars, char);
-      loop()
+      loop();
+    elseif (char = '.')
+      if (member?('.', chars))
+        parse-error(p, "Invalid float: '.' already seen.");
+      end;
+      p.consume;
+      add!(chars, char);
+      loop();
+    elseif (~member?(char, $token-terminators))
+      parse-error(p, "Invalid number: %c unexpected");
     end;
   end;
   let string = map-as(<string>, identity, chars);
