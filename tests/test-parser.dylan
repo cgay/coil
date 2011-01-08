@@ -26,6 +26,7 @@ define suite basics-test-suite ()
   test test-file-delete;
   test test-file-expansion;
   //test test-package;     // @package is Python-specific
+  test test-whitespace;
   test test-comments;
   test test-parse-error;
   test test-order;
@@ -88,7 +89,19 @@ end;
 define test test-file-expansion ()
 end;
 
+define test test-whitespace ()
+  let struct1 = parse-coil("x :1 y : 2 z\t:3");
+  check-equal("x = 1", struct1["x"], 1);
+  check-equal("y = 2", struct1["y"], 2);
+  check-equal("z = 3", struct1["z"], 3);
+
+  let struct2 = parse-coil("x: [ 1   2 3\t4\r\n5]");
+  check-equal("whitespace in list", struct2["x"], #[1, 2, 3, 4, 5]);
+end;
+
 define test test-comments ()
+  let struct = parse-coil("y: [12 #hello\n]");
+  check-equal("y = #[12]", struct["y"], #[12]);
 end;
 
 define test test-parse-error ()
@@ -98,6 +111,8 @@ define test test-order ()
 end;
 
 define test test-list ()
+  let struct = parse-coil("x: ['a' 1 2.0 True False None]");
+  check-equal("list contents", struct["x"], vector("a", 1, 2.0d0, #t, #f, $none));
 end;
 
 define test test-nested-list ()

@@ -25,7 +25,8 @@ define module coil
     parse-coil,
     <coil-error>,
     <coil-parse-error>,
-    write-coil;
+    write-coil,
+    $none;         // None parses to this.
 
   // Struct
   create
@@ -54,7 +55,6 @@ define module %coil
     parse-list,
     parse-number,
     parse-string,
-    parse-struct,
     lookahead,
     consume;
 end module %coil;

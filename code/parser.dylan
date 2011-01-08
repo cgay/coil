@@ -28,6 +28,9 @@ end;
 define class <coil-parse-error> (<coil-error>)
 end;
 
+
+/// Synopsis: '$none' is what "None" parses to.
+///
 define class <none> (<object>) end;
 define constant $none :: <none> = make(<none>);
 
@@ -36,7 +39,7 @@ define class <coil-parser> (<object>)
   constant slot input-source :: <object>, required-init-keyword: source:;
 
   // Text is the entire original coil source text.
-  constant slot input-text :: <string> = "";
+  constant slot input-text :: <string> = "", required-init-keyword: text:;
 
   // Index points to the next character to be read by "consume".
   slot current-index :: <integer> = 0;
@@ -56,7 +59,7 @@ define method parse-error
   error(make(<coil-parse-error>,
              format-string: concatenate(context, format-string),
              format-arguments: args));
-end method parse-error;
+end;
 
 
 /// Synopsis: Parse coil formatted text from the given 'source'.
@@ -67,18 +70,97 @@ define open generic parse-coil
 define method parse-coil
     (source :: <locator>) => (coil :: <struct>)
   with-open-file (stream = source, direction: input:)
-    parse-struct(make(<coil-parser>,
-                      source: as(<string>, source),
-                      text: read-to-end(stream)))
+    parse-struct-attributes(make(<coil-parser>,
+                                 source: as(<string>, source),
+                                 text: read-to-end(stream)),
+                            make(<struct>))
   end
-end method parse-coil;
+end;
 
 define method parse-coil
     (source :: <stream>) => (coil :: <struct>)
-  parse-struct(make(<coil-parser>,
-                    source: source,
-                    text: read-to-end(source)))
+  parse-struct-attributes(make(<coil-parser>,
+                               source: source,
+                               text: read-to-end(source)),
+                          make(<struct>))
+end;
+
+define method parse-coil
+    (source :: <string>) => (coil :: <struct>)
+  parse-struct-attributes(make(<coil-parser>,
+                               source: #f,
+                               text: source),
+                          make(<struct>))
+end;
+
+/// Synopsis: Parse a struct.  The opening '{' has already been eaten.
+///           This is where parsing begins for a new file.
+define method parse-coil
+    (p :: <coil-parser>) => (struct :: <struct>)
+  let struct = make(<struct>);
+  eat-whitespace-and-comments(p);
+  let first-char = p.lookahead;
+  select (first-char)
+    #f =>
+      #f;  // empty string (at top level only) yields empty struct.
+    '{' =>
+      p.consume;
+      parse-struct-attributes(p, struct);
+      expect(p, "}");
+    otherwise =>
+      parse-error(p, "Invalid struct.  Expected '{' or EOF.");
+  end;
+  struct
 end method parse-coil;
+
+/// Synopsis: Parse the attributes of a struct and add them to the 'struct'
+///           argument passed in.
+define method parse-struct-attributes
+    (p :: <coil-parser>, struct :: <struct>) => (struct :: <struct>)
+  iterate loop ()
+    eat-whitespace-and-comments(p);
+    select (p.lookahead)
+      '}', #f =>
+        #f;  // done
+      '~' =>
+        p.consume;
+        let path = parse-path(p);
+        todo-deletion;
+        loop();
+      '@' =>
+        p.consume;
+        select (p.lookahead)
+          'e' =>
+            expect(p, "extends:");
+            // TODO: Need to find out whether these can be forward references
+            //       or not.  If yes, then insert the reference into the struct
+            //       in order with a unique key and resolve it later.
+            parse-path(p);
+            todo-extend;
+          'f' =>
+            expect(p, "file:");
+            let filename = parse-any(p);
+            if (instance?(filename, <string>))
+              map-into(struct, identity, parse-coil(filename));
+            else
+              parse-error(p, "Expected a filename for @file but got %=",
+                          filename);
+            end;
+          otherwise =>
+            parse-error(p, "Unrecognized special attribute");
+        end select;
+        loop();
+      otherwise =>
+        let key = parse-key(p);
+        eat-whitespace(p);
+        expect(p, ":");
+        eat-whitespace(p);
+        struct[key] := parse-any(p);
+        loop();
+    end;
+  end iterate;
+  struct
+end method parse-struct-attributes;
 
 
 /// Synopsis: parse and return any valid coil object.  A struct, list,
@@ -94,13 +176,10 @@ define method parse-any
   let char = p.lookahead;
   select (char by member?)
     "'\"" =>
-      p.consume;
-      parse-string(p, char);
+      parse-string(p);
     "{" =>
-      p.consume;
-      parse-struct(p);
+      parse-coil(p);
     "[" =>
-      p.consume;
       parse-list(p);
     "-0123456789" =>
       parse-number(p);
@@ -114,7 +193,7 @@ define method parse-any
       expect(p, "None");
       $none;
     otherwise =>
-      parse-error(p, "Unexpected input starting with %c.", char);
+      parse-error(p, "Unexpected input starting with %=.", char);
   end select
 end method parse-any;
 
@@ -207,52 +286,6 @@ define method parse-key
   end
 end method parse-key;
 
-/// Synopsis: Parse a struct.  The opening '{' has already been eaten.
-///           This is where parsing begins for a new file.
-define method parse-struct
-    (p :: <coil-parser>) => (struct :: <struct>)
-  let struct = make(<struct>);
-  iterate loop ()
-    eat-whitespace-and-comments(p);
-    select (p.lookahead)
-      '}' =>
-        p.consume;    // done parsing struct
-      '~' =>
-        p.consume;
-        let path = parse-path(p);
-        todo-deletion;
-        loop();
-      '@' =>
-        p.consume;
-        select (p.lookahead)
-          'e' =>
-            expect(p, "extends:");
-            // TODO: Need to find out whether these can be forward references
-            //       or not.  If yes, then insert the reference into the struct
-            //       in order with a unique key and resolve it later.
-            parse-path(p);
-            todo-extend;
-          'f' =>
-            expect(p, "file:");
-            let filename = parse-any(p);
-            if (instance?(filename, <string>))
-              map-into(struct, identity, parse-coil(filename));
-            else
-              parse-error(p, "Expected a filename for @file but got %=",
-                          filename);
-            end;
-          otherwise =>
-            parse-error(p, "Unrecognized special attribute");
-        end select;
-        loop();
-      otherwise =>
-        struct[parse-key(p)] := parse-any(p);
-        loop();
-    end;
-  end iterate;
-  struct
-end method parse-struct;
-
 /// Synopsis: Parse the reference starting with the next token and delete it
 ///           from the given struct.
 // TODO: Document that deletions can only reference something 
@@ -285,11 +318,15 @@ define method parse-path
 end method parse-path;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
-///           The opening '[' has already been eaten.
+///
 define method parse-list
     (p :: <coil-parser>)
  => (list :: <vector>)
   let list = make(<stretchy-vector>);
+  if (p.lookahead ~= '[')
+    parse-error(p, "List expected");
+  end;
+  p.consume;  // '['
   iterate loop ()
     eat-whitespace-and-comments(p);
     if (p.lookahead ~= ']')
@@ -313,7 +350,7 @@ define method parse-number
     add!(chars, p.consume);
   end;
   if (~member?(p.lookahead, "0123456789"))
-    parse-error(p, "Invalid number: Digit expected but got %c",
+    parse-error(p, "Invalid number: Digit expected but got %=",
                 p.lookahead);
   end;
   iterate loop ()
@@ -329,8 +366,10 @@ define method parse-number
       p.consume;
       add!(chars, char);
       loop();
+    elseif (~char)
+      #f
     elseif (~member?(char, $token-terminators))
-      parse-error(p, "Invalid number: %c unexpected");
+      parse-error(p, "Invalid number: %= unexpected");
     end;
   end;
   let string = map-as(<string>, identity, chars);
@@ -342,49 +381,94 @@ define method parse-number
 end method parse-number;
 
 /// Synopsis: Parse a string.  It may be a single or multi-line string.
-///     The 'start-char' has already been eaten.
 ///
-/// Arguments:
-///     start-char - The character that started the string.  If this is a
-///                  multi-line string then there will be two more of these
-///                  to eat before reading the actual string.  The end
-///                  must match this character.
 define method parse-string
-    (p :: <coil-parser>, start-char :: one-of('"', '\''))
- => (string :: <string>)
-  let char2 = p.consume;
-  let char3 = lookahead(p, offset: 1);
-  let multi-line? = (start-char = char2 = char3);
-  if (multi-line?)
+    (p :: <coil-parser>) => (string :: <string>)
+  let char1 = p.consume;
+  assert(member?(char1, "\"'"));
+  let char2 = p.lookahead;
+  if (char1 = char2)
     p.consume;
+    let char3 = p.lookahead;
+    if (char1 = char3)
+      p.consume;
+      parse-multi-line-string(p, char1)
+    else
+      ""
+    end
+  else
+    let string = parse-simple-string(p, char1);
+    if (p.lookahead ~= char1)
+      parse-error(p, "Unterminated string.  Expected \"'\"");
+    end;
     p.consume;
-  end;
+    string
+  end
+end method parse-string;
+
+define table $escapes = {
+    'n' => '\n',
+    'r' => '\r',
+    't' => '\t'
+  };
+    
+
+/// Synopsis: Parse a one line string terminated by 'start-char'
+///
+define method parse-simple-string
+    (p :: <coil-parser>, start-char :: <character>)
+  let chars = make(<stretchy-vector>);
+  iterate loop (escaped? = #f)
+    let char = p.lookahead;
+    if (escaped?)
+      p.consume;
+      add!(chars, element($escapes, char, default: char));
+      loop(#f)
+    else
+      select (char)
+        '\\' =>
+          p.consume;
+          loop(#t);
+        '\n', '\r' =>
+          parse-error(p, "Unterminated string");
+        start-char =>
+          map-as(<string>, identity, chars);   // done
+        otherwise =>
+          p.consume;
+          add!(chars, char);
+          loop(#f);
+      end
+    end
+  end
+end method parse-simple-string;
+      
+/// Synopsis: Parse a multi-line string terminated by 'start-char'
+///
+define method parse-multi-line-string
+    (p :: <coil-parser>, start-char :: <character>)
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
     let char = p.consume;
-    if (char = '\\')
-      if (escaped?)
-        add!(chars, char);
-        loop(#f);
-      else
-        loop(#t);
-      end;
+    if (escaped?)
+      add!(chars, element($escapes, char, default: char));
+      loop(#f)
+    elseif (char = '\\')
+      loop(#t)
     elseif (char = start-char)
-      if (multi-line?)
-        let ch2 = p.consume;
-        if (ch2 = start-char)
-          let ch3 = p.consume;
-          if (ch3 ~= start-char)
-            add!(chars, start-char);
-            add!(chars, start-char);
-            loop(#f);
-          end;
-        else
-          add!(chars, start-char);
-          loop(#f);
-        end;
-      end;
-    end if;
-  end iterate;
-  map-as(<string>, identity, chars)
-end method parse-string;
+      let ch2 = lookahead(p);
+      let ch3 = lookahead(p, offset: 1);
+      if (char = ch2 = ch3)
+        p.consume;
+        p.consume;
+        map-as(<string>, identity, chars)  // done
+      else
+        add!(chars, char);
+        loop(#f)
+      end
+    else
+      add!(chars, char);
+      loop(#f)
+    end
+  end
+end method parse-multi-line-string;
+
