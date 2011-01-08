@@ -90,13 +90,23 @@ define test test-file-expansion ()
 end;
 
 define test test-whitespace ()
+  // Whitespace around keys and values in a struct.
   let struct1 = parse-coil("x :1 y : 2 z\t:3");
   check-equal("x = 1", struct1["x"], 1);
   check-equal("y = 2", struct1["y"], 2);
   check-equal("z = 3", struct1["z"], 3);
 
-  let struct2 = parse-coil("x: [ 1   2 3\t4\r\n5]");
-  check-equal("whitespace in list", struct2["x"], #[1, 2, 3, 4, 5]);
+  // Whitespace around Struct delimiters
+  let struct2 = parse-coil("x:{} y:{z:9} z: {\n a: 1\n}\n");
+  for (key in #["x", "y", "z"])
+    check-instance?("blah", <struct>, struct2[key]);
+  end;
+  check-equal("foo", struct2.size, 0);
+  check-equal("bar", struct2["y.z"], 9);
+  check-equal("baz", struct2["z.a"], 1);
+
+  let struct3 = parse-coil("x: [ 1   2 3\t4\r\n5]");
+  check-equal("whitespace in list", struct3["x"], #[1, 2, 3, 4, 5]);
 end;
 
 define test test-comments ()
@@ -116,6 +126,8 @@ define test test-list ()
 end;
 
 define test test-nested-list ()
+  let struct = parse-coil("x: ['a' ['b' 'c']]");
+  check-equal("nested list", struct["x"], #["a", #["b", "c"]]);
 end;
 
 define test test-reparse ()
