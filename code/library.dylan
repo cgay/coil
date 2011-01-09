@@ -22,6 +22,9 @@ end library coil;
 // Interface module
 define module coil
   create
+    $coil-major-version,
+    $coil-minor-version,
+    $coil-patch-version,
     parse-coil,
     <coil-error>,
     <coil-parse-error>,
@@ -30,7 +33,8 @@ define module coil
 
   // Struct
   create
-    <struct>;
+    <struct>,
+    struct-parent;
 end module coil;
 
 // Implementation module

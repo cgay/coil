@@ -131,14 +131,14 @@ define method parse-struct-attributes
         p.consume;
         select (p.lookahead)
           'e' =>
-            expect(p, "extends:");
+            expect(p, "extends", ":");
             // TODO: Need to find out whether these can be forward references
             //       or not.  If yes, then insert the reference into the struct
             //       in order with a unique key and resolve it later.
             parse-path(p);
             todo-extend;
           'f' =>
-            expect(p, "file:");
+            expect(p, "file", ":");
             let filename = parse-any(p);
             if (instance?(filename, <string>))
               map-into(struct, identity, parse-coil(filename));
@@ -146,16 +146,21 @@ define method parse-struct-attributes
               parse-error(p, "Expected a filename for @file but got %=",
                           filename);
             end;
+          'm' =>
+            expect(p, "map", ":");
+            parse-error(p, "@map is not supported.  Do you _really_ need it???");
           otherwise =>
             parse-error(p, "Unrecognized special attribute");
         end select;
         loop();
       otherwise =>
         let key = parse-key(p);
-        eat-whitespace(p);
-        expect(p, ":");
-        eat-whitespace(p);
-        struct[key] := parse-any(p);
+        expect(p, "", ":", "");
+        let value = parse-any(p);
+        struct[key] := value;
+        if (instance?(value, <struct>) & ~value.struct-parent)
+          value.struct-parent := struct;
+        end;
         loop();
     end;
   end iterate;
@@ -183,6 +188,9 @@ define method parse-any
       parse-list(p);
     "-0123456789" =>
       parse-number(p);
+    // TODO: These three aren't right because they could be TrueXXX etc.
+    //       That's one reason a real tokenizer separate from the parser
+    //       would be better.
     "T" =>
       expect(p, "True");
       #t;
@@ -230,14 +238,17 @@ define method consume
 end method consume;
 
 define method expect
-    (p :: <coil-parser>, string :: <string>) => ()
-  let start = p.current-index;
-  for (char in string)
-    if (char ~= p.consume)
-      parse-error(p, "Expected %= but got %=",
-                  string,
-                  copy-sequence(p.input-text, start: start, end: p.current-index));
+    (p :: <coil-parser>, #rest strings :: <string>) => ()
+  for (string in strings)
+    let start = p.current-index;
+    for (char in string)
+      if (char ~= p.consume)
+        parse-error(p, "Expected %= but got %=",
+                    string,
+                    copy-sequence(p.input-text, start: start, end: p.current-index));
+      end;
     end;
+    eat-whitespace(p);
   end;
 end method expect;
 

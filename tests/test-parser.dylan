@@ -29,7 +29,7 @@ define suite basics-test-suite ()
   test test-whitespace;
   test test-comments;
   test test-parse-error;
-  test test-order;
+  //test test-order;       // Deprecated =a not supported.
   test test-list;
   test test-nested-list;
   test test-reparse;
@@ -69,6 +69,8 @@ define test test-struct ()
 end;
 
 define test test-extends-1 ()
+  let struct = parse-coil("a: {x: 'x'} b: { @extends: ..a }");
+  check-equal("basic @extend test", struct["b.x"], "x");
 end;
 
 define test test-references ()
@@ -101,7 +103,7 @@ define test test-whitespace ()
   for (key in #["x", "y", "z"])
     check-instance?("blah", <struct>, struct2[key]);
   end;
-  check-equal("foo", struct2.size, 0);
+  check-equal("foo", struct2["x"].size, 0);
   check-equal("bar", struct2["y.z"], 9);
   check-equal("baz", struct2["z.a"], 1);
 
@@ -115,10 +117,40 @@ define test test-comments ()
 end;
 
 define test test-parse-error ()
-end;
+  for (coil in vector(
+        "struct: {",
+        "struct: }",
+        "a: b:",
+        ":",
+        "[]",
+        "a: ~b",
+        "@x: 2",
+        "x: 12c",
+        "x: 12.c3",
+        "x: @root",
+        "x: ..a",
+        "z: [{x: 2}]",            // can't have struct in list
+        "z: \"lalalal \\\"",      // string is not closed
+        "a: 1 z: [ =@root.a ]",
+        "a: {@extends: @root.b}", // b doesn't exist
+        "a: {@extends: ..b}",     // b doesn't exist
+        "a: {@extends: x}",
+        "a: {@extends: .}",
+        "a: 1 b: { @extends: ..a }", // extend struct only
+        "a: { @extends: ..a }",      // extend self
+        "a: { b: {} @extends: b }",     // extend children
+        "a: { b: { @extends: ...a } }", // extend parents
+        "a: [1 2 3]]"
+        ))
+    check-condition(fmt("%= gets parse error", coil),
+                    <coil-parse-error>,
+                    parse-coil(coil));
+  end;
+end test test-parse-error;
 
-define test test-order ()
-end;
+// We don't support =a, which this seems to test.
+//define test test-order ()
+//end;
 
 define test test-list ()
   let struct = parse-coil("x: ['a' 1 2.0 True False None]");
@@ -150,20 +182,83 @@ define suite extends-test-suite ()
   test test-relative-paths;
 end suite extends-test-suite;
 
+define method get-test-struct ()
+  parse-coil(
+            "A: {"
+            "    a: 'a'"
+            "    b: 'b'"
+            "    c: 'c'"
+            "}"
+            "B: {"
+            "    @extends: ..A"
+            "    e: [ 'one' 2 'omg three' ]"
+            "    ~c"
+            "}"
+            "C: {"
+            "    a: ..A.a"
+            "    b: @root.B.b"
+            "}"
+            "D: {"
+            "    @extends: @root.B"
+            "}"
+            ""
+            "E: {"
+            "    F.G.H: {"
+            "        a: 1 b: 2 c: 3"
+            "    }"
+            ""
+            "    F.G.I: {"
+            "        @extends: ..H"
+            "    }"
+            "}"
+               )
+end method get-test-struct;
+
 define test test-extends-basic ()
+  let tree = get-test-struct();
+  check-equal("aaa", tree["A.a"], "a");
+  check-equal("bbb", tree["A.b"], "b");
+  check-equal("ccc", tree["A.c"], "c");
+  check-equal("size", tree["A"].size, 3);
 end;
 
+// temp -- Intended to fail, until I figure out what the correct error should be.
+define constant <key-error> = <arithmetic-error>;
+
 define test test-extends-and-delete ()
+  let tree = get-test-struct();
+  check-equal("aaa", tree["B.a"], "a");
+  check-equal("bbb", tree["B.b"], "b");
+  check-condition("ccc", <key-error>, tree["B.c"]);
+  check-equal("ddd", tree["B.e"], #["one", 2, "omg three"]);
+  check-equal("size", tree["B"].size, 3);
 end;
 
 define test test-extends-references ()
+  let tree = get-test-struct();
+  check-equal("aaa", tree["C.a"], "a");
+  check-equal("bbb", tree["C.b"], "b");
+  check-equal("size", tree["C"].size, 2);
 end;
 
 define test test-extends-2 ()
+  let tree = get-test-struct();
+  check-equal("aaa", tree["D.a"], "a");
+  check-equal("bbb", tree["D.b"], "b");
+  check-condition("ccc", <key-error>, tree["D.c"]);
+  check-equal("ddd", tree["D.e"], #["one", 2, "omg three"]);
+  check-equal("size", tree["D"].size, 3);
 end;
 
 define test test-relative-paths ()
+  let tree = get-test-struct();
+  check-equal("aaa", tree["E.F.G.H.a"], 1);
+  check-equal("bbb", tree["E.F.G.I.a"], 1);
+  check-equal("ccc", tree["E.F.G.H"], tree["E.F.G.I"]);
 end;
+
+
+//// 
 
 
 //// @file
@@ -175,12 +270,42 @@ define suite file-test-suite ()
 end;
 
 define test test-file-1 ()
+  let root = parse-coil(get-locator("example.coil"));
+  check-equal("aaa", root["x"], 1);
+  check-equal("bbb", root["y.a"], 2);
+  check-equal("ccc", root["y.x"], 1);
+  check-equal("ddd", root["y.a2"], 2);
+  check-equal("eee", root["y.x2"], 1);
+  check-equal("fff", root["y.x3"], "1");
 end;
 
 define test test-file-2 ()
+  let root = parse-coil(get-locator("example2.coil"));
+  check-equal("aaa", root["sub.x"], "foo");
+  check-equal("bbb", root["sub.y.a"], "bar");
+  check-equal("ccc", root["sub.y.x"], "foo");
+  check-equal("ddd", root["sub.y.a2"], "bar");
+  check-equal("eee", root["sub.y.x2"], "foo");
+  check-equal("fff", root["sub.y.x3"], "foo");
+  check-equal("ggg", root["sub2.y.a"], 2);
+  check-equal("hhh", root["sub2.y.x"], 1);
+  check-equal("iii", root["sub2.y.a2"], 2);
+  check-equal("jjj", root["sub2.y.x2"], 1);
+  check-equal("kkk", root["sub2.y.x3"], "1");
+  check-equal("lll", root["sub3.y.a"], "bar");
+  check-equal("mmm", root["sub3.y.x"], "zoink");
+  check-equal("nnn", root["sub3.y.a2"], "bar");
+  check-equal("ooo", root["sub3.y.x2"], "zoink");
+  check-equal("ppp", root["sub3.y.x3"], "zoink");
 end;
 
 define test test-file-3 ()
+  let root = parse-coil(get-locator("example3.coil"));
+  check-equal("aaa", root["x"], 1);
+  check-equal("bbb", root["y.a"], 2);
+  check-equal("ccc", root["y.x"], 1);
+  check-equal("ddd", root["y.a2"], 2);
+  check-equal("eee", root["y.b"], 3);
 end;
 
 
@@ -191,8 +316,70 @@ define suite map-test-suite ()
   test test-map-extends;
 end suite map-test-suite;
 
+define method get-map-struct ()
+  parse-coil(
+            "expanded: {"
+            "    a1: {"
+            "        z: 1"
+            "        x: 1"
+            "        y: 1"
+            "    }"
+            "    a2: {"
+            "        z: 1"
+            "        x: 2"
+            "        y: 3"
+            "    }"
+            "    a3: {"
+            "        z: 1"
+            "        x: 3"
+            "        y: 5"
+            "    }"
+            "    b1: {"
+            "        z: 2"
+            "        x: 1"
+            "        y: 1"
+            "    }"
+            "    b2: {"
+            "        z: 2"
+            "        x: 2"
+            "        y: 3"
+            "    }"
+            "    b3: {"
+            "        z: 2"
+            "        x: 3"
+            "        y: 5"
+            "    }"
+            "}"
+            "map: {"
+            "    @map: [1 2 3]"
+            "    x: [1 2 3]"
+            "    y: [1 3 5]"
+            "    a: { z: 1 }"
+            "    b: { z: 2 }"
+            "}"
+            "map1: {"
+            "    @extends: ..map"
+            "}"
+            "map2: {"
+            "    @extends: ..map"
+            "    a: { z: 3 }"
+            "    j: [7 8 9]"
+            "}"
+               )
+end method get-map-struct;
+
 define test test-map ()
+  let tree = get-map-struct();
+  check-equal("map = expanded", tree["map"], tree["expanded"]);
 end;
 
 define test test-map-extends ()
+  let tree = get-map-struct();
+  check-equal("aaa", tree["map1"], tree["expanded"]);
+  check-equal("bbb", tree["map2.a1.z"], 3);
+  check-equal("ccc", tree["map2.a1.j"], 7);
+  check-equal("ddd", tree["map2.a2.z"], 3);
+  check-equal("eee", tree["map2.a2.j"], 8);
+  check-equal("fff", tree["map2.a3.z"], 3);
+  check-equal("ggg", tree["map2.a3.j"], 9);
 end;
