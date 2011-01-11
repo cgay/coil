@@ -180,6 +180,7 @@ define suite extends-test-suite ()
   test test-extends-references;
   test test-extends-2;
   test test-relative-paths;
+  test test-extend-copies;
 end suite extends-test-suite;
 
 define method get-test-struct ()
@@ -257,11 +258,44 @@ define test test-relative-paths ()
   check-equal("ccc", tree["E.F.G.H"], tree["E.F.G.I"]);
 end;
 
+define test test-double-extend ()
+  let text = "a: { aa: 1 cc: 3} b: { bb: 2 cc: 4 } c: { @extends: ..a @extends: ..b }";
+  let root = parse-coil(text);
+  check-equal("aaa", root.size, 3);
+  check-equal("bbb", root["c.aa"], 1);
+  check-equal("ccc", root["c.bb"], 2);
+  check-equal("ddd", root["c.cc"], 3);  // first @extend to set cc wins
+end test test-double-extend;
+
+/// Synopsis: Verify that when a struct is extended it is deep copied so that
+///           multiple extensions can be modified independently.
+define test test-extend-copies ()
+  let text = "a: { aa: { aaa: 1 aab: 2 } }"
+             "b: { @extends: ..a aa.aaa: 3 ~aa.aab }"
+             "c: { @extends: ..a aa.aaa: 4 aa.aab: 5 }";
+  let root = parse-coil(text);
+  check-equal("one-a", root["b.aa"].size, 1);
+  check-equal("one-b", root["b.aa.aaa"], 3);
+
+  check-equal("two-a", root["c.aa"].size, 2);
+  check-equal("two-b", root["c.aa.aaa"], 4);
+  check-equal("two-c", root["c.aa.aab"], 5);
+end;
 
 //// 
 
 
 //// @file
+
+define method make-test-locator
+    (filename :: <string>) => (locator :: <locator>)
+  // TODO: This is temporary (obviously).  The plan is to add a --config
+  //       argument to Testworks that will allow a mapping between libraries
+  //       and the root of their source tree to be specified, so that data
+  //       files that are distributed with the project can be found.
+  todo-make-test-locator
+end;
+
 
 define suite file-test-suite ()
   test test-file-1;
@@ -270,7 +304,7 @@ define suite file-test-suite ()
 end;
 
 define test test-file-1 ()
-  let root = parse-coil(get-locator("example.coil"));
+  let root = parse-coil(make-test-locator("example.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);
@@ -280,7 +314,7 @@ define test test-file-1 ()
 end;
 
 define test test-file-2 ()
-  let root = parse-coil(get-locator("example2.coil"));
+  let root = parse-coil(make-test-locator("example2.coil"));
   check-equal("aaa", root["sub.x"], "foo");
   check-equal("bbb", root["sub.y.a"], "bar");
   check-equal("ccc", root["sub.y.x"], "foo");
@@ -300,7 +334,7 @@ define test test-file-2 ()
 end;
 
 define test test-file-3 ()
-  let root = parse-coil(get-locator("example3.coil"));
+  let root = parse-coil(make-test-locator("example3.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);

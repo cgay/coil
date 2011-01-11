@@ -114,34 +114,36 @@ define method parse-coil
 end method parse-coil;
 
 /// Synopsis: Parse the attributes of a struct and add them to the 'struct'
-///           argument passed in.
+///           argument passed in.  @extends, @file, and deletions are added
+///           to the struct under special names (which aren't valid as keys)
+///           so that they may be resolved during a second pass.
 define method parse-struct-attributes
     (p :: <coil-parser>, struct :: <struct>) => (struct :: <struct>)
-  iterate loop ()
+  iterate loop (n = 1)
     eat-whitespace-and-comments(p);
     select (p.lookahead)
       '}', #f =>
         #f;  // done
       '~' =>
         p.consume;
-        let path = parse-path(p);
-        todo-deletion;
-        loop();
+        let key = format-to-string("@delete-%d", n);
+        struct[key] := parse-reference(p);
+        loop(n);
       '@' =>
         p.consume;
         select (p.lookahead)
           'e' =>
             expect(p, "extends", ":");
-            // TODO: Need to find out whether these can be forward references
-            //       or not.  If yes, then insert the reference into the struct
-            //       in order with a unique key and resolve it later.
-            parse-path(p);
-            todo-extend;
+            let key = format-to-string("@extends-%d", n);
+            struct[key] := parse-reference(p);
+            loop(n + 1);
           'f' =>
             expect(p, "file", ":");
             let filename = parse-any(p);
             if (instance?(filename, <string>))
-              map-into(struct, identity, parse-coil(filename));
+              let key = format-to-string("@file-%d", n);
+              struct[key] := parse-coil(filename);
+              loop(n + 1);
             else
               parse-error(p, "Expected a filename for @file but got %=",
                           filename);
@@ -152,7 +154,7 @@ define method parse-struct-attributes
           otherwise =>
             parse-error(p, "Unrecognized special attribute");
         end select;
-        loop();
+        loop(n);
       otherwise =>
         let key = parse-key(p);
         expect(p, "", ":", "");
@@ -161,7 +163,7 @@ define method parse-struct-attributes
         if (instance?(value, <struct>) & ~value.struct-parent)
           value.struct-parent := struct;
         end;
-        loop();
+        loop(n);
     end;
   end iterate;
   struct
@@ -200,6 +202,8 @@ define method parse-any
     "N" =>
       expect(p, "None");
       $none;
+    ".@" =>
+      parse-reference(p);
     otherwise =>
       parse-error(p, "Unexpected input starting with %=.", char);
   end select
@@ -291,20 +295,12 @@ define method parse-key
   if (match)
     let (key, _, epos) = match-group(match, 0);
     p.current-index := epos;
+    adjust-column-number(p);
     key
   else
     parse-error(p, "Struct key expected");
   end
 end method parse-key;
-
-/// Synopsis: Parse the reference starting with the next token and delete it
-///           from the given struct.
-// TODO: Document that deletions can only reference something 
-//       inside the struct currently being parsed.
-define method parse-deletion
-    (p :: <coil-parser>)
-  todo-deletion
-end;
 
 /// Synopsis: A <reference> which will be resolved during a second pass, after the
 ///           entire configuration has been parsed.
@@ -315,18 +311,19 @@ end;
 
 /// Synopsis: Parse a reference to another element in the configuration.
 ///           For example, "@root.foo" or "...b".
-define method parse-path
+define method parse-reference
     (p :: <coil-parser>) => (ref :: <reference>)
   eat-whitespace-and-comments(p);
   let match = regex-search($path-regex, p.input-text, start: p.current-index);
   if (match)
     let (path, _, epos) = match-group(match, 0);
     p.current-index := epos;
+    adjust-column-number(p);
     make(<reference>, path: path)
   else
     parse-error(p, "Reference path expected");
   end
-end method parse-path;
+end method parse-reference;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///
