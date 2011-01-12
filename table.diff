@@ -1,0 +1,40 @@
+Index: dylan/table.dylan
+===================================================================
+--- dylan/table.dylan	(revision 13033)
++++ dylan/table.dylan	(working copy)
+@@ -1092,7 +1092,7 @@
+ //   apply(make, <standard-object-table>, initargs);
+ // end method make;
+ 
+-define sealed method key-test (table :: <table>)
++define method key-test (table :: <table>)
+   => test :: <function>;
+   test-function(table-vector(table));
+ end method key-test;
+@@ -1172,7 +1172,7 @@
+   end if;
+ end;
+ 
+-define sealed inline method element (table :: <table>, key,
++define method element (table :: <table>, key,
+                        #key default = $table-entry-empty)
+   => value;
+   gethash(table, key, default, #t);
+@@ -1327,7 +1327,7 @@
+   end if;
+ end;
+ 
+-define sealed inline method element-setter (new-value, table :: <table>, key)
++define method element-setter (new-value, table :: <table>, key)
+     => new-value;
+   check-type(new-value, element-type(table));
+   puthash(new-value, table, key);
+@@ -1724,7 +1724,7 @@
+   end if;
+ end;
+ 
+-define sealed inline method forward-iteration-protocol (table :: <table>)
++define method forward-iteration-protocol (table :: <table>)
+   => (initial-state		:: <iteration-state>,
+       limit			:: <object>,
+       next-state		:: <function>,
