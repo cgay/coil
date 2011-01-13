@@ -11,6 +11,11 @@ define suite parser-test-suite ()
   suite map-test-suite;
 end suite parser-test-suite;
 
+// TODO:
+// * Tests to verify that error messages are good
+// 
+
+
 //// Basics
 
 define suite basics-test-suite ()
@@ -184,35 +189,34 @@ define suite extends-test-suite ()
 end suite extends-test-suite;
 
 define method get-test-struct ()
-  parse-coil(
-            "A: {"
-            "    a: 'a'"
-            "    b: 'b'"
-            "    c: 'c'"
-            "}"
-            "B: {"
-            "    @extends: ..A"
-            "    e: [ 'one' 2 'omg three' ]"
-            "    ~c"
-            "}"
-            "C: {"
-            "    a: ..A.a"
-            "    b: @root.B.b"
-            "}"
-            "D: {"
-            "    @extends: @root.B"
-            "}"
-            ""
-            "E: {"
-            "    F.G.H: {"
-            "        a: 1 b: 2 c: 3"
-            "    }"
-            ""
-            "    F.G.I: {"
-            "        @extends: ..H"
-            "    }"
-            "}"
-               )
+  parse-coil("A: {\n"
+             "    a: 'a'\n"
+             "    b: 'b'\n"
+             "    c: 'c'\n"
+             "}\n"
+             "B: {\n"
+             "    @extends: ..A\n"
+             "    e: [ 'one' 2 'omg three' ]\n"
+             "    ~c\n"
+             "}\n"
+             "C: {\n"
+             "    a: ..A.a\n"
+             "    b: @root.B.b\n"
+             "}\n"
+             "D: {\n"
+             "    @extends: @root.B\n"
+             "}\n"
+             "\n"
+             "E: {\n"
+             "    F.G.H: {\n"
+             "        a: 1 b: 2 c: 3\n"
+             "    }\n"
+             "\n"
+             "    F.G.I: {\n"
+             "        @extends: ..H\n"
+             "    }\n"
+             "}\n"
+             )
 end method get-test-struct;
 
 define test test-extends-basic ()
@@ -293,7 +297,8 @@ define method make-test-locator
   //       argument to Testworks that will allow a mapping between libraries
   //       and the root of their source tree to be specified, so that data
   //       files that are distributed with the project can be found.
-  todo-make-test-locator
+  merge-locators(as(<file-locator>, filename),
+                 as(<directory-locator>, "c:/cgay/dylan/trunk/libraries/coil/"))
 end;
 
 
@@ -304,7 +309,7 @@ define suite file-test-suite ()
 end;
 
 define test test-file-1 ()
-  let root = parse-coil(make-test-locator("example.coil"));
+  let root = parse-coil(make-test-locator("tests/example.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);
@@ -314,7 +319,7 @@ define test test-file-1 ()
 end;
 
 define test test-file-2 ()
-  let root = parse-coil(make-test-locator("example2.coil"));
+  let root = parse-coil(make-test-locator("tests/example2.coil"));
   check-equal("aaa", root["sub.x"], "foo");
   check-equal("bbb", root["sub.y.a"], "bar");
   check-equal("ccc", root["sub.y.x"], "foo");
@@ -334,7 +339,7 @@ define test test-file-2 ()
 end;
 
 define test test-file-3 ()
-  let root = parse-coil(make-test-locator("example3.coil"));
+  let root = parse-coil(make-test-locator("tests/example3.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);
@@ -351,54 +356,53 @@ define suite map-test-suite ()
 end suite map-test-suite;
 
 define method get-map-struct ()
-  parse-coil(
-            "expanded: {"
-            "    a1: {"
-            "        z: 1"
-            "        x: 1"
-            "        y: 1"
-            "    }"
-            "    a2: {"
-            "        z: 1"
-            "        x: 2"
-            "        y: 3"
-            "    }"
-            "    a3: {"
-            "        z: 1"
-            "        x: 3"
-            "        y: 5"
-            "    }"
-            "    b1: {"
-            "        z: 2"
-            "        x: 1"
-            "        y: 1"
-            "    }"
-            "    b2: {"
-            "        z: 2"
-            "        x: 2"
-            "        y: 3"
-            "    }"
-            "    b3: {"
-            "        z: 2"
-            "        x: 3"
-            "        y: 5"
-            "    }"
-            "}"
-            "map: {"
-            "    @map: [1 2 3]"
-            "    x: [1 2 3]"
-            "    y: [1 3 5]"
-            "    a: { z: 1 }"
-            "    b: { z: 2 }"
-            "}"
-            "map1: {"
-            "    @extends: ..map"
-            "}"
-            "map2: {"
-            "    @extends: ..map"
-            "    a: { z: 3 }"
-            "    j: [7 8 9]"
-            "}"
+  parse-coil("expanded: {\n"
+             "    a1: {\n"
+             "        z: 1\n"
+             "        x: 1\n"
+             "        y: 1\n"
+             "    }\n"
+             "    a2: {\n"
+             "        z: 1\n"
+             "        x: 2\n"
+             "        y: 3\n"
+             "    }\n"
+             "    a3: {\n"
+             "        z: 1\n"
+             "        x: 3\n"
+             "        y: 5\n"
+             "    }\n"
+             "    b1: {\n"
+             "        z: 2\n"
+             "        x: 1\n"
+             "        y: 1\n"
+             "    }\n"
+             "    b2: {\n"
+             "        z: 2\n"
+             "        x: 2\n"
+             "        y: 3\n"
+             "    }\n"
+             "    b3: {\n"
+             "        z: 2\n"
+             "        x: 3\n"
+             "        y: 5\n"
+             "    }\n"
+             "}\n"
+             "map: {\n"
+             "    @map: [1 2 3]\n"
+             "    x: [1 2 3]\n"
+             "    y: [1 3 5]\n"
+             "    a: { z: 1 }\n"
+             "    b: { z: 2 }\n"
+             "}\n"
+             "map1: {\n"
+             "    @extends: ..map\n"
+             "}\n"
+             "map2: {\n"
+             "    @extends: ..map\n"
+             "    a: { z: 3 }\n"
+             "    j: [7 8 9]\n"
+             "}\n"
                )
 end method get-map-struct;
 

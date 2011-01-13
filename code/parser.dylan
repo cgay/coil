@@ -4,7 +4,15 @@ Author: Carl Gay
 Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
-// TODO: track struct parents
+// This parser makes two passes.  During the first pass objects that
+// don't involve any references outside the struct are parsed, and most
+// struct keys are filled in.  The second pass resolves @extends, @file,
+// deletions, and compound struct keys (i.e., a.b.c: foo).  This is
+// necessary because @extends and @file may change what a.b.c refers to.
+//
+// During the first pass, keys begining with '@' are used as placeholders
+// for items that need to be resolved during the second pass.  This works
+// because '@' isn't valid is actual struct keys.
 
 define constant $whitespace :: <string>
   = " \t\n\r";
@@ -15,18 +23,15 @@ define constant $token-terminators :: <string>
 define constant $key-regex :: <regex>
   = compile-regex("-*[a-zA-Z_][\\w-]*");
 
+define constant $extended-key-regex :: <regex>
+  = compile-regex(format-to-string("%s(\\.%s)*",
+                                   $key-regex.regex-pattern,
+                                   $key-regex.regex-pattern));
+
 define constant $path-regex :: <regex>
   = compile-regex(format-to-string("(@|\\.+)?%s(\\.%s)*",
                                    $key-regex.regex-pattern,
                                    $key-regex.regex-pattern));
-
-/// Synopsis: All coil errors are subclasses of this.
-define class <coil-error> (<format-string-condition>, <error>)
-end;
-
-
-define class <coil-parse-error> (<coil-error>)
-end;
 
 
 /// Synopsis: '$none' is what "None" parses to.
@@ -50,17 +55,46 @@ define class <coil-parser> (<object>)
 end class <coil-parser>;
 
 
+/// Synopsis: Any error signalled during parsing (except for file
+///           system errors) will be an instance of this.
+define class <coil-parse-error> (<coil-error>)
+end;
+
+
 /// Synopsis: Signal <coil-parse-error> with the given 'format-string' and
 ///           'args' as the message.  If the current source location is known
 ///           it is prefixed to the message.
 define method parse-error
     (p :: <coil-parser>, format-string, #rest args)
-  let context = format-to-string("<%d:%d> ", p.line-number, p.column-number);
-  error(make(<coil-parse-error>,
-             format-string: concatenate(context, format-string),
-             format-arguments: args));
+  let context = format-to-string("@%d:%d ", p.line-number, p.column-number);
+  let message = concatenate(context,
+                            apply(format-to-string, format-string, args),
+                            "\n", p.current-line,
+                            "\n", p.indicator-line);
+  error(make(<coil-parse-error>, format-string: message));
 end;
 
+/// Synopsis: Return the line pointed to by 'current-index'.
+///
+define method current-line
+    (p :: <coil-parser>) => (line :: <string>)
+  let max = p.input-text.size;
+  let curr = p.current-index;
+  let epos = min(position(p.input-text, '\n', start: curr) | max,
+                 position(p.input-text, '\r', start: curr) | max);
+  copy-sequence(p.input-text,
+                start: p.current-index - p.column-number + 1,
+                end: epos)
+end;
+
+/// Synopsis: Return a line that indicates which character 'current-index'
+///           points to.  ".........^"
+define method indicator-line
+    (p :: <coil-parser>) => (line :: <string>)
+  let line = make(<string>, size: p.column-number, fill: '.');
+  line[p.column-number - 1] := '^';
+  line
+end;
 
 /// Synopsis: Parse coil formatted text from the given 'source'.
 ///           This is the main user-visible entry point for parsing.
@@ -70,48 +104,43 @@ define open generic parse-coil
 define method parse-coil
     (source :: <locator>) => (coil :: <struct>)
   with-open-file (stream = source, direction: input:)
-    parse-struct-attributes(make(<coil-parser>,
-                                 source: as(<string>, source),
-                                 text: read-to-end(stream)),
-                            make(<struct>))
+    %parse-coil(make(<coil-parser>,
+                     source: as(<string>, source),
+                     text: read-to-end(stream)))
   end
 end;
 
 define method parse-coil
     (source :: <stream>) => (coil :: <struct>)
-  parse-struct-attributes(make(<coil-parser>,
-                               source: source,
-                               text: read-to-end(source)),
-                          make(<struct>))
+  %parse-coil(make(<coil-parser>, source: source, text: read-to-end(source)))
 end;
 
 define method parse-coil
     (source :: <string>) => (coil :: <struct>)
-  parse-struct-attributes(make(<coil-parser>,
-                               source: #f,
-                               text: source),
-                          make(<struct>))
+  %parse-coil(make(<coil-parser>, source: source, text: source))
 end;
 
-/// Synopsis: Parse a struct.  The opening '{' has already been eaten.
-///           This is where parsing begins for a new file.
-define method parse-coil
+define method %parse-coil
+    (p :: <coil-parser>) => (struct :: <struct>)
+  let struct = make(<struct>);
+  parse-struct-attributes(p, struct);
+  resolve-references(struct)
+end;
+
+define method parse-struct
     (p :: <coil-parser>) => (struct :: <struct>)
   let struct = make(<struct>);
   eat-whitespace-and-comments(p);
-  let first-char = p.lookahead;
-  select (first-char)
-    #f =>
-      #f;  // empty string (at top level only) yields empty struct.
+  select (p.lookahead)
     '{' =>
       p.consume;
       parse-struct-attributes(p, struct);
       expect(p, "}");
     otherwise =>
-      parse-error(p, "Invalid struct.  Expected '{' or EOF.");
+      parse-error(p, "Invalid struct.  Expected '{'.");
   end;
   struct
-end method parse-coil;
+end method parse-struct;
 
 /// Synopsis: Parse the attributes of a struct and add them to the 'struct'
 ///           argument passed in.  @extends, @file, and deletions are added
@@ -142,7 +171,7 @@ define method parse-struct-attributes
             let filename = parse-any(p);
             if (instance?(filename, <string>))
               let key = format-to-string("@file-%d", n);
-              struct[key] := parse-coil(filename);
+              struct[key] := parse-coil(as(<file-locator>, filename));
               loop(n + 1);
             else
               parse-error(p, "Expected a filename for @file but got %=",
@@ -185,7 +214,7 @@ define method parse-any
     "'\"" =>
       parse-string(p);
     "{" =>
-      parse-coil(p);
+      parse-struct(p);
     "[" =>
       parse-list(p);
     "-0123456789" =>
@@ -246,7 +275,9 @@ define method expect
   for (string in strings)
     let start = p.current-index;
     for (char in string)
-      if (char ~= p.consume)
+      if (char = p.lookahead)
+        p.consume
+      else
         parse-error(p, "Expected %= but got %=",
                     string,
                     copy-sequence(p.input-text, start: start, end: p.current-index));
@@ -286,21 +317,67 @@ define method eat-comment
   end;
 end;
 
-// Note: Keys may start with any number of -'s but must be followed by a
-//       letter.
+/// Synopsis: Parse a struct key, which may be a simple identifier such
+///           as "a" or a compound identifier such as "a.b.c".  Compound
+///           identifiers are resolved during the second pass.
 define method parse-key
     (p :: <coil-parser>) => (key :: <string>)
-  let match = regex-search($key-regex, p.input-text,
+  let match = regex-search($extended-key-regex, p.input-text,
                            start: p.current-index);
   if (match)
     let (key, _, epos) = match-group(match, 0);
     p.current-index := epos;
     adjust-column-number(p);
-    key
+    if (member?('.', key))
+      make-compound-key(key)
+    else
+      key
+    end
   else
     parse-error(p, "Struct key expected");
   end
 end method parse-key;
+
+define method make-compound-key
+    (key :: <string>) => (compound-key :: <string>)
+  // This feels a bit hackish, but is necessary because element(<struct>, "a.b.c")
+  // will err if any of a, b, or c don't exist as sub-structs.  Compound keys are
+  // unparsed on the second pass.
+  concatenate("@key@", map(method (c)
+                             iff(c = '.', '@', c)
+                           end,
+                           key))
+end;
+
+define method unmake-compound-key
+    (compound-key :: <string>) => (key :: <string>)
+  assert(compound-key.size > 5 & "@key@" = copy-sequence(compound-key, end: 5));
+  map(method (c)
+        iff(c = '@', '.', c)
+      end,
+      copy-sequence(compound-key, start: 5))
+end;
+
+/// Synopsis: Fixup the parser's 'column-number' slot based on the
+///           value of the 'current-index' slot, by looking back for the
+///           nearest \n or \r and taking the offset from there.  This
+///           is expected to be called by parsing methods that adjust
+///           current-index by means other than calling 'consume'.
+define method adjust-column-number
+    (p :: <coil-parser>) => (column-number :: <integer>)
+  iterate loop (index = p.current-index - 1, n = 1)
+    if (index < 0)
+      p.column-number := n
+    else
+      let char = p.input-text[index];
+      if (char = '\n' | char = '\r')
+        p.column-number := n
+      else
+        loop(index - 1, n + 1)
+      end
+    end
+  end
+end method adjust-column-number;
 
 /// Synopsis: A <reference> which will be resolved during a second pass, after the
 ///           entire configuration has been parsed.
@@ -480,3 +557,16 @@ define method parse-multi-line-string
   end
 end method parse-multi-line-string;
 
+
+//// Pass Two
+
+/// Synopsis: Resolve @extends, @file, @delete, and @key references in 'struct'.
+///
+define method resolve-references
+    (struct :: <struct>) => (new-struct :: <struct>)
+  let new = make(<struct>);
+  for (value keyed-by key in struct)
+
+// Need to store the deletions in the old struct as a single sequence so that
+// we can avoid adding those items when they are discovered.
+      

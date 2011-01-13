@@ -40,7 +40,8 @@ end module coil;
 // Implementation module
 define module %coil
   use coil;
-  use common-dylan;
+  use common-dylan,
+    exclude: { format-to-string };
   use file-system;
   use format;
   use locators;
