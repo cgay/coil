@@ -12,7 +12,13 @@ License:   See LICENSE.txt in this distribution for details.
 //
 // During the first pass, keys begining with '@' are used as placeholders
 // for items that need to be resolved during the second pass.  This works
-// because '@' isn't valid is actual struct keys.
+// because '@' isn't valid in actual struct keys.
+
+// TODO:
+// * What are the intended semantics when a struct has both x and ~x?
+//
+// * Keep track of the source location of items that are resolved during
+//   the second pass, for better error messages.
 
 define constant $whitespace :: <string>
   = " \t\n\r";
@@ -122,14 +128,14 @@ end;
 
 define method %parse-coil
     (p :: <coil-parser>) => (struct :: <struct>)
-  let struct = make(<struct>);
-  parse-struct-attributes(p, struct);
-  resolve-references(struct)
+  let root = make(<struct>, name: "@root");
+  resolve-references(p, parse-struct-attributes(p, root), #());
+  root
 end;
 
 define method parse-struct
-    (p :: <coil-parser>) => (struct :: <struct>)
-  let struct = make(<struct>);
+    (p :: <coil-parser>, key :: <string>) => (struct :: <struct>)
+  let struct = make(<struct>, name: key);
   eat-whitespace-and-comments(p);
   select (p.lookahead)
     '{' =>
@@ -155,8 +161,10 @@ define method parse-struct-attributes
         #f;  // done
       '~' =>
         p.consume;
-        let key = format-to-string("@delete-%d", n);
-        struct[key] := parse-reference(p);
+        let deletions = element(struct, $delete, default: #f)
+                        | make(<stretchy-vector>);
+        add!(deletions, parse-reference(p)); 
+        struct[$delete] := deletions;
         loop(n);
       '@' =>
         p.consume;
@@ -169,14 +177,25 @@ define method parse-struct-attributes
           'f' =>
             expect(p, "file", ":");
             let filename = parse-any(p);
-            if (instance?(filename, <string>))
-              let key = format-to-string("@file-%d", n);
-              struct[key] := parse-coil(as(<file-locator>, filename));
-              loop(n + 1);
-            else
-              parse-error(p, "Expected a filename for @file but got %=",
-                          filename);
-            end;
+            select (filename by instance?)
+              <string> =>
+                // @file: "foo.coil"
+                let key = format-to-string("@file-%d", n);
+                struct[key] := parse-coil(as(<file-locator>, filename));
+                loop(n + 1);
+              <sequence> =>
+                // @file: [ "foo.coil" @root.a.b ]
+                let (filename, path) = apply(values, filename);
+                let key = format-to-string("@file-%d", n);
+                let file-struct = parse-coil(as(<file-locator>, filename));
+                let target :: <struct> = file-struct[path];
+                target.struct-parent := struct;
+                struct[key] := target;
+                loop(n + 1);
+              otherwise =>
+                parse-error(p, "Expected a filename for @file but got %=",
+                            filename);
+            end select;
           'm' =>
             expect(p, "map", ":");
             parse-error(p, "@map is not supported.  Do you _really_ need it???");
@@ -187,7 +206,7 @@ define method parse-struct-attributes
       otherwise =>
         let key = parse-key(p);
         expect(p, "", ":", "");
-        let value = parse-any(p);
+        let value = parse-any(p, key: key);
         struct[key] := value;
         if (instance?(value, <struct>) & ~value.struct-parent)
           value.struct-parent := struct;
@@ -203,10 +222,15 @@ end method parse-struct-attributes;
 ///           integer, float, string, boolean, or None.  This is used for
 ///           parsing list elements and struct values, for example.
 ///           Note that this may only be called when an ENTIRE OBJECT is
-///           expected.  That specifically excludes parsing a path.
+///           expected, which specifically excludes parsing a path.
+/// Arguments:
+///   p   - Coil parser.
+///   key - The key for which this value is being parsed.  This is used
+///         to give a name to the struct created, if this method parses
+///         a struct.
 ///
 define method parse-any
-    (p :: <coil-parser>)
+    (p :: <coil-parser>, #key key :: <string>)
  => (object :: <object>)
   eat-whitespace-and-comments(p);
   let char = p.lookahead;
@@ -214,7 +238,7 @@ define method parse-any
     "'\"" =>
       parse-string(p);
     "{" =>
-      parse-struct(p);
+      parse-struct(p, key);
     "[" =>
       parse-list(p);
     "-0123456789" =>
@@ -340,9 +364,8 @@ end method parse-key;
 
 define method make-compound-key
     (key :: <string>) => (compound-key :: <string>)
-  // This feels a bit hackish, but is necessary because element(<struct>, "a.b.c")
-  // will err if any of a, b, or c don't exist as sub-structs.  Compound keys are
-  // unparsed on the second pass.
+  // This feels a bit hackish, but is necessary because dot ('.') is treated
+  // specially by element(<struct>, foo).
   concatenate("@key@", map(method (c)
                              iff(c = '.', '@', c)
                            end,
@@ -560,13 +583,134 @@ end method parse-multi-line-string;
 
 //// Pass Two
 
+/*
+
+Rules:
+. Any key, k or k.l.m, always sets the value it specifies.
+. Compound keys such as k.l.m must be set after @extends has been
+  processed, in case they override items in sub-structs created by
+  the @extends.
+. Similarly for deletions.
+. @extends never sets a value for a key that already exists.
+
+*/
+
 /// Synopsis: Resolve @extends, @file, @delete, and @key references in 'struct'.
 ///
 define method resolve-references
-    (struct :: <struct>) => (new-struct :: <struct>)
-  let new = make(<struct>);
+    (p :: <coil-parser>, struct :: <struct>, seen :: <list>)
+ => ()
   for (value keyed-by key in struct)
+    select (key by starts-with)
+      "@extends" =>
+        resolve-extends(p, struct, value, pair(struct.full-name, seen));
+      "@file" =>
+        extend(p, struct, value, seen);
+      "@key@" =>
+        resolve-key(p, struct, key, value);
+      $delete =>
+        // Ignore deletions here.  They are only used to prevent additions.
+        #f;
+      otherwise =>
+        assert(key[0] ~= '@');
+        if (~deleted?(struct, key))
+          // TODO: This gets the order wrong.  It should be easy enough to add
+          //       an "insert" method for <ordered-table> later on.  Generally
+          //       people don't care about order for configs, so it can wait.
+          struct[key] := value;
+          if (instance?(value, <struct>))
+            // Do not add struct.full-name to 'seen' here.
+            resolve-references(p, value, seen);
+          end;
+        end;
+    end select;
+  end;
+end method resolve-references;
 
-// Need to store the deletions in the old struct as a single sequence so that
-// we can avoid adding those items when they are discovered.
-      
+
+/// Synopsis: Extend 'struct' with the values in the struct pointed to by
+///           'reference'.
+/// Arguments:
+///   seen  - A list of canonical names that have already been seen during
+///           this recursion, to prevent loops.
+define method resolve-extends
+    (p :: <coil-parser>, struct :: <struct>, reference :: <reference>, seen :: <list>)
+ => ()
+  let target = dereference(reference.reference-path, struct);
+  if (~instance?(target, <struct>))
+    parse-error(p, "@extends target (%s) should be a struct but is a %s.",
+                reference.reference-path, target.object-class);
+  elseif (descendant?(target, struct))
+    parse-error(p, "@extends target is a descendant of containing struct.");
+  elseif (member?(target.full-name, seen, test: \=))
+    parse-error(p, "@extends circularity: %s",
+                join(reverse(pair(target.full-name, seen)), " -> "));
+  else
+    extend(p, struct, target, pair(target.full-name, seen));
+  end;
+end method resolve-extends;
+
+
+/// Synopsis: Extend 'struct' with the keys and values from 'extendee'.
+///
+// TODO: get order correct
+define method extend
+    (p :: <coil-parser>, struct :: <struct>, extendee :: <struct>, seen :: <list>)
+ => ()
+  for (value keyed-by key in extendee)
+    if (instance?(value, <struct>))
+      resolve-references(p, struct, seen);
+    end;
+    if (~key-exists?(struct, key) & ~deleted?(struct, key))
+      struct[key] := value;
+    end;
+  end;
+end method extend;
+
+
+/// Synopsis: Store a value for a compound key.  e.g., "a.b.c: 1"
+///
+define method resolve-key
+    (p :: <coil-parser>, struct :: <struct>, compound-key :: <string>, value)
+ => ()
+  let key = unmake-compound-key(compound-key);
+  iterate loop (struct = struct, path = split(key, '.'))
+    let simple-key = path[0];
+    if (path.size = 1)
+      if (~deleted?(struct, simple-key))
+        struct[simple-key] := value;
+      end;
+    else
+      let sub-struct = element(struct, simple-key, default: #f);
+      if (instance?(sub-struct, <struct>))
+        loop(sub-struct, tail(path));
+      else
+        parse-error(p, "Invalid key, %s.  %s does not name a struct.",
+                    key, join(slice(split(key, '.'), 0, -path.size), "."));
+      end;
+    end;
+  end;
+end method resolve-key;
+
+
+define method slice
+    (seq :: <sequence>, bpos :: <integer>, epos :: false-or(<integer>))
+ => (slice :: <sequence>)
+  let len :: <integer> = seq.size;
+  let _bpos = iff(bpos < 0, len + bpos, bpos);
+  let _epos = iff(epos,
+                  iff(epos < 0, len + epos, epos),
+                  len);
+  copy-sequence(seq, start: _bpos, end: _epos)
+end;
+
+define method starts-with
+    (thing :: <object>, prefix :: <string>) => (yes? :: <boolean>)
+  #f
+end;
+
+define method starts-with
+    (thing :: <string>, prefix :: <string>) => (yes? :: <boolean>)
+  slice(thing, 0, #f) = prefix
+end;
+

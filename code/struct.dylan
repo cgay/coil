@@ -78,13 +78,39 @@ define method table-protocol
 end method table-protocol;
 
 
+////
+//// Struct
+////
+
+define constant $delete :: <string>
+  = "@delete";
+
+
 /// Synopsis: The core Coil data structure.  Back links to the parent struct
 ///           are maintained so that absolute references (i.e., @root...)
 ///           can be determined.
 define open class <struct> (<ordered-string-table>)
-    slot struct-parent :: false-or(<struct>) = #f,
-      init-keyword: parent:;
+  slot struct-parent :: false-or(<struct>) = #f,
+    init-keyword: parent:;
+  slot struct-name :: <string>,
+    required-init-keyword: name:;
 end class <struct>;
+
+define method full-name
+    (struct :: <struct>) => (full-name :: <string>)
+  iff(struct.struct-parent,
+      concatenate(full-name(struct.struct-parent), ".", struct.struct-name),
+      struct.struct-name)
+end;
+
+/// Synopsis: Return #t if the first argument is a descendant of the second.
+///
+define method descendant?
+    (putative-descendant :: <struct>, struct :: <struct>)
+ => (descendant? :: <boolean>)
+  let parent = putative-descendant.struct-parent;
+  parent & (putative-descendant == struct | descendant?(parent, struct))
+end;
 
 /// Synopsis: Retrieve an attribute value from a <struct>.
 ///
@@ -127,6 +153,11 @@ define method element
     next-method()
   end
 end method element;
+
+define method deleted?
+    (struct :: <struct>, key) => (deleted? :: <boolean>)
+  member?(key, element(struct, $delete, default: #[]), test: \=)
+end;
 
 
 //// Outputting coil
