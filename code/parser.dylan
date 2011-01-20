@@ -5,10 +5,11 @@ Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 // This parser makes two passes.  During the first pass objects that
-// don't involve any references outside the struct are parsed, and most
-// struct keys are filled in.  The second pass resolves @extends, @file,
-// deletions, and compound struct keys (i.e., a.b.c: foo).  This is
-// necessary because @extends and @file may change what a.b.c refers to.
+// don't involve any links outside the struct are parsed, and most
+// struct keys are filled in.  The second pass resolves @extends,
+// @file, deletions, compound struct keys (i.e., a.b.c: foo) and
+// struct value links (i.e., foo: a.b.c).  This is necessary because
+// @extends and @file may change what a.b.c refers to.
 //
 // During the first pass, keys begining with '@' are used as placeholders
 // for items that need to be resolved during the second pass.  This works
@@ -163,7 +164,7 @@ define method parse-struct-attributes
         p.consume;
         let deletions = element(struct, $delete, default: #f)
                         | make(<stretchy-vector>);
-        add!(deletions, parse-reference(p)); 
+        add!(deletions, parse-link(p)); 
         struct[$delete] := deletions;
         loop(n);
       '@' =>
@@ -172,7 +173,7 @@ define method parse-struct-attributes
           'e' =>
             expect(p, "extends", ":");
             let key = format-to-string("@extends-%d", n);
-            struct[key] := parse-reference(p);
+            struct[key] := parse-link(p);
             loop(n + 1);
           'f' =>
             expect(p, "file", ":");
@@ -256,7 +257,7 @@ define method parse-any
       expect(p, "None");
       $none;
     ".@" =>
-      parse-reference(p);
+      parse-link(p);
     otherwise =>
       parse-error(p, "Unexpected input starting with %=.", char);
   end select
@@ -402,28 +403,29 @@ define method adjust-column-number
   end
 end method adjust-column-number;
 
-/// Synopsis: A <reference> which will be resolved during a second pass, after the
-///           entire configuration has been parsed.
-define class <reference> (<object>)
-  constant slot reference-path :: <string>,
-    required-init-keyword: path:;
+/// Synopsis: A link to another element.  These are resolved during the
+///           second pass, after the entire configuration has been parsed.
+///           They're used for both keys and values.
+define class <link> (<object>)
+  constant slot link-name :: <string>,
+    required-init-keyword: name:;
 end;
 
-/// Synopsis: Parse a reference to another element in the configuration.
+/// Synopsis: Parse a link to another element in the configuration.
 ///           For example, "@root.foo" or "...b".
-define method parse-reference
-    (p :: <coil-parser>) => (ref :: <reference>)
+define method parse-link
+    (p :: <coil-parser>) => (link :: <link>)
   eat-whitespace-and-comments(p);
   let match = regex-search($path-regex, p.input-text, start: p.current-index);
   if (match)
-    let (path, _, epos) = match-group(match, 0);
+    let (name, _, epos) = match-group(match, 0);
     p.current-index := epos;
     adjust-column-number(p);
-    make(<reference>, path: path)
+    make(<link>, name: name)
   else
-    parse-error(p, "Reference path expected");
+    parse-error(p, "Link name expected");
   end
-end method parse-reference;
+end method parse-link;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///
@@ -439,7 +441,7 @@ define method parse-list
     eat-whitespace-and-comments(p);
     if (p.lookahead ~= ']')
       // TODO: This allows structs inside lists but the Python version doesn't.
-      //       This will mess with relative path references.
+      //       This will mess with <link>s.
       add!(list, parse-any(p));
       loop()
     end
@@ -601,7 +603,7 @@ define method resolve-references
     (p :: <coil-parser>, struct :: <struct>, seen :: <list>)
  => ()
   for (value keyed-by key in struct)
-    select (key by starts-with)
+    select (key by starts-with?)
       "@extends" =>
         resolve-extends(p, struct, value, pair(struct.full-name, seen));
       "@file" =>
@@ -629,17 +631,17 @@ end method resolve-references;
 
 
 /// Synopsis: Extend 'struct' with the values in the struct pointed to by
-///           'reference'.
+///           'link'.
 /// Arguments:
 ///   seen  - A list of canonical names that have already been seen during
 ///           this recursion, to prevent loops.
 define method resolve-extends
-    (p :: <coil-parser>, struct :: <struct>, reference :: <reference>, seen :: <list>)
+    (p :: <coil-parser>, struct :: <struct>, link :: <link>, seen :: <list>)
  => ()
-  let target = dereference(reference.reference-path, struct);
+  let target = follow-links(p, struct, link);
   if (~instance?(target, <struct>))
     parse-error(p, "@extends target (%s) should be a struct but is a %s.",
-                reference.reference-path, target.object-class);
+                link.link-name, target.object-class);
   elseif (descendant?(target, struct))
     parse-error(p, "@extends target is a descendant of containing struct.");
   elseif (member?(target.full-name, seen, test: \=))
@@ -666,6 +668,30 @@ define method extend
     end;
   end;
 end method extend;
+
+
+/// Synopsis: Follow 'link' starting at 'anchor' and return the value it
+///           points to.
+// TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
+//       element(<struct>, key).
+define method follow-links
+    (p :: <coil-parser>, anchor :: <struct>, link :: <link>)
+ => (target :: <object>)
+  let keys = as(<list>, split(link.link-name, '.'));
+  iterate loop (struct = anchor,
+                keys = iff(keys[0] = "", tail(keys), keys))
+    if (~struct)
+      parse-error(p, "Invalid link, %=: Struct %= has no parent.",
+                  link.link-name, struct.full-name);
+    elseif (keys.size = 1)
+      struct[keys[0]]
+    elseif (keys[0] = "")
+      loop(struct.struct-parent, tail(keys))
+    else
+      loop(struct[keys[0]], tail(keys))
+    end
+  end
+end method follow-links;
 
 
 /// Synopsis: Store a value for a compound key.  e.g., "a.b.c: 1"
@@ -697,20 +723,20 @@ define method slice
     (seq :: <sequence>, bpos :: <integer>, epos :: false-or(<integer>))
  => (slice :: <sequence>)
   let len :: <integer> = seq.size;
-  let _bpos = iff(bpos < 0, len + bpos, bpos);
+  let _bpos = max(0, iff(bpos < 0, len + bpos, bpos));
   let _epos = iff(epos,
-                  iff(epos < 0, len + epos, epos),
+                  min(len, iff(epos < 0, len + epos, epos)),
                   len);
   copy-sequence(seq, start: _bpos, end: _epos)
 end;
 
-define method starts-with
+define method starts-with?
     (thing :: <object>, prefix :: <string>) => (yes? :: <boolean>)
   #f
 end;
 
-define method starts-with
+define method starts-with?
     (thing :: <string>, prefix :: <string>) => (yes? :: <boolean>)
-  slice(thing, 0, #f) = prefix
+  slice(thing, 0, prefix.size) = prefix
 end;
 
