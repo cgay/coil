@@ -38,6 +38,7 @@ define suite basics-test-suite ()
   test test-list;
   test test-nested-list;
   test test-reparse;
+  test test-follow-links;
 end suite basics-test-suite;
 
 define test test-empty ()
@@ -175,6 +176,36 @@ define test test-reparse ()
                        end);
   check-equal("reparsed same as orig?", coil, new);
 end test test-reparse;
+
+define test test-follow-links ()
+  let p = make(<coil-parser>, source: "", text: "");
+  let root = make(<struct>, name: "@root");
+  let child = make(<struct>, name: "child");
+  let grandchild = make(<struct>, name: "grandchild");
+
+  // parent links
+  child.struct-parent := root;
+  grandchild.struct-parent := child;
+  
+  // child links
+  root["child"] := child;
+  child["grandchild"] := grandchild;
+
+  for (item in list(list("..child", child, child),
+                    list("...child", grandchild, child),
+                    list("...child.grandchild", grandchild, grandchild),
+                    list("@root", root, root),
+                    list("@root.child", root, child),
+                    list("@root.child.grandchild", root, grandchild)))
+    let (link-name, anchor, expected) = apply(values, item);
+    let actual = follow-links(p, make(<link>, name: link-name), anchor);
+    test-output("actual = %s\n", actual.struct-name);
+    force-output(*standard-output*);
+    check-equal(fmt("%= resolves correctly", link-name),
+                expected,
+                actual);
+  end;
+end test test-follow-links;
 
 
 //// @extends
@@ -421,3 +452,4 @@ define test test-map-extends ()
   check-equal("fff", tree["map2.a3.z"], 3);
   check-equal("ggg", tree["map2.a3.j"], 9);
 end;
+

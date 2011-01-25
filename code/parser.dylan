@@ -228,10 +228,11 @@ end method parse-struct-attributes;
 ///   p   - Coil parser.
 ///   key - The key for which this value is being parsed.  This is used
 ///         to give a name to the struct created, if this method parses
-///         a struct.
+///         a struct.  #f indicates that this is not called from
+///         parse-struct-attributes, which is not allowed.
 ///
 define method parse-any
-    (p :: <coil-parser>, #key key :: <string>)
+    (p :: <coil-parser>, #key key :: false-or(<string>))
  => (object :: <object>)
   eat-whitespace-and-comments(p);
   let char = p.lookahead;
@@ -239,6 +240,9 @@ define method parse-any
     "'\"" =>
       parse-string(p);
     "{" =>
+      if (~key)
+        parse-error(p, "Structs are not allowed inside of lists.");
+      end;
       parse-struct(p, key);
     "[" =>
       parse-list(p);
@@ -411,6 +415,48 @@ define class <link> (<object>)
     required-init-keyword: name:;
 end;
 
+
+/// Synopsis: Follow 'link' and return the value it points to.  'anchor'
+///           is the struct to which the link is relative, if not an
+///           absolute link reference such as @root.a.b.c.
+// TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
+//       element(<struct>, key).
+define method follow-links
+    (p :: <coil-parser>, link :: <link>, anchor :: <struct>)
+ => (target :: <object>)
+  let keys = as(<list>, split(link.link-name, '.'));
+  if (keys.head = "")
+    keys := keys.tail;     // The initial dot is not used.
+  end;
+  iterate loop (struct = anchor, keys = keys)
+    if (~struct)
+      parse-error(p, "Link %= tries to reference the parent of @root, "
+                     "which doesn't exist.",
+                  link.link-name);
+    elseif (empty?(keys))
+      struct
+    else
+      let key = keys[0];
+      let rest = tail(keys);
+      select (key by \=)
+        "" =>          // We split on '.', so "..." turns into "", ""
+          loop(struct.struct-parent, rest);
+        "@root" =>
+          loop(find-root(struct), rest);
+        otherwise =>
+          let value = element(struct, key, default: #f)
+                      | parse-error(p, "Invalid link %=: %= is not present "
+                                       "as a key for %=.",
+                                    link.link-name, key, struct);
+          iff(empty?(rest),
+              value,
+              loop(value, rest));
+      end select
+    end
+  end
+end method follow-links;
+
+
 /// Synopsis: Parse a link to another element in the configuration.
 ///           For example, "@root.foo" or "...b".
 define method parse-link
@@ -421,6 +467,10 @@ define method parse-link
     let (name, _, epos) = match-group(match, 0);
     p.current-index := epos;
     adjust-column-number(p);
+    if (ends-with?(name, "."))
+      parse-error(p, "Links may not end with '.' since this would result "
+                  "in a cycle being created.");
+    end;
     make(<link>, name: name)
   else
     parse-error(p, "Link name expected");
@@ -440,9 +490,7 @@ define method parse-list
   iterate loop ()
     eat-whitespace-and-comments(p);
     if (p.lookahead ~= ']')
-      // TODO: This allows structs inside lists but the Python version doesn't.
-      //       This will mess with <link>s.
-      add!(list, parse-any(p));
+      add!(list, parse-any(p, key: #f));
       loop()
     end
   end;
@@ -616,6 +664,14 @@ define method resolve-references
       otherwise =>
         assert(key[0] ~= '@');
         if (~deleted?(struct, key))
+          if (instance?(value, <link>))
+            let link :: <link> = value;
+            value := follow-links(p, link, struct);
+            if (instance?(value, <struct>) & descendant?(value, struct))
+              parse-error(p, "Link target %= is a descendant of containing struct.",
+                          link.link-name);
+            end;
+          end;
           // TODO: This gets the order wrong.  It should be easy enough to add
           //       an "insert" method for <ordered-table> later on.  Generally
           //       people don't care about order for configs, so it can wait.
@@ -638,7 +694,7 @@ end method resolve-references;
 define method resolve-extends
     (p :: <coil-parser>, struct :: <struct>, link :: <link>, seen :: <list>)
  => ()
-  let target = follow-links(p, struct, link);
+  let target = follow-links(p, link, struct);
   if (~instance?(target, <struct>))
     parse-error(p, "@extends target (%s) should be a struct but is a %s.",
                 link.link-name, target.object-class);
@@ -670,30 +726,6 @@ define method extend
 end method extend;
 
 
-/// Synopsis: Follow 'link' starting at 'anchor' and return the value it
-///           points to.
-// TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
-//       element(<struct>, key).
-define method follow-links
-    (p :: <coil-parser>, anchor :: <struct>, link :: <link>)
- => (target :: <object>)
-  let keys = as(<list>, split(link.link-name, '.'));
-  iterate loop (struct = anchor,
-                keys = iff(keys[0] = "", tail(keys), keys))
-    if (~struct)
-      parse-error(p, "Invalid link, %=: Struct %= has no parent.",
-                  link.link-name, struct.full-name);
-    elseif (keys.size = 1)
-      struct[keys[0]]
-    elseif (keys[0] = "")
-      loop(struct.struct-parent, tail(keys))
-    else
-      loop(struct[keys[0]], tail(keys))
-    end
-  end
-end method follow-links;
-
-
 /// Synopsis: Store a value for a compound key.  e.g., "a.b.c: 1"
 ///
 define method resolve-key
@@ -711,13 +743,15 @@ define method resolve-key
       if (instance?(sub-struct, <struct>))
         loop(sub-struct, tail(path));
       else
-        parse-error(p, "Invalid key, %s.  %s does not name a struct.",
+        parse-error(p, "Invalid key, %=.  %= does not name a struct.",
                     key, join(slice(split(key, '.'), 0, -path.size), "."));
       end;
     end;
   end;
 end method resolve-key;
 
+
+// These could go in (un)common-dylan along with a slice! and slice!-setter
 
 define method slice
     (seq :: <sequence>, bpos :: <integer>, epos :: false-or(<integer>))
@@ -738,5 +772,15 @@ end;
 define method starts-with?
     (thing :: <string>, prefix :: <string>) => (yes? :: <boolean>)
   slice(thing, 0, prefix.size) = prefix
+end;
+
+define method ends-with?
+    (thing :: <object>, suffix :: <string>) => (yes? :: <boolean>)
+  #f
+end;
+
+define method ends-with?
+    (thing :: <string>, suffix :: <string>) => (yes? :: <boolean>)
+  slice(thing, -suffix.size, #f) = suffix
 end;
 

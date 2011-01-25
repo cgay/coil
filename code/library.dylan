@@ -19,7 +19,8 @@ define library coil
   export %coil;
 end library coil;
 
-// Interface module
+// Interface module exports public API.
+//
 define module coil
   create
     $coil-major-version,
@@ -34,10 +35,12 @@ define module coil
   // Struct
   create
     <struct>,
+    struct-name,
     struct-parent;
 end module coil;
 
-// Implementation module
+// Implementation module exports names used by the test suite.
+//
 define module %coil
   use coil;
   use common-dylan,
@@ -62,6 +65,17 @@ define module %coil
     parse-string,
     lookahead,
     consume;
+
+  // Links
+  export
+    <link>,
+    link-name,
+    follow-links;
+
+  // Structs
+  export
+    struct-parent-setter;
+
 end module %coil;
 
 

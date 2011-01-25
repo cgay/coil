@@ -109,7 +109,16 @@ define method descendant?
     (putative-descendant :: <struct>, struct :: <struct>)
  => (descendant? :: <boolean>)
   let parent = putative-descendant.struct-parent;
-  parent & (putative-descendant == struct | descendant?(parent, struct))
+  ~(parent | struct.struct-parent)  // Both are #f?  i.e., @root extends @root
+  | (parent
+     & (putative-descendant == struct | descendant?(parent, struct)))
+end;
+
+define method find-root
+    (struct :: <struct>) => (root :: <struct>)
+  iff(struct.struct-parent,
+      find-root(struct.struct-parent),
+      struct)
 end;
 
 /// Synopsis: Retrieve an attribute value from a <struct>.
