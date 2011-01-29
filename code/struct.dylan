@@ -10,7 +10,7 @@ License:   See LICENSE.txt in this distribution for details.
 ///
 define open class <ordered-table> (<table>)
   // TODO: This should be a doubly-linked list so that deletion is cheaper.
-  constant slot key-sequence :: <stretchy-vector> = make(<stretchy-vector>);
+  slot key-sequence :: <list> = #();
 end;
 
 define method forward-iteration-protocol
@@ -54,12 +54,34 @@ define method element-setter
     (new-value :: <object>, table :: <ordered-table>, key :: <object>)
  => (new-value :: <object>)
   if (~key-exists?(table, key))
-    add!(table.key-sequence, key);
+    table.key-sequence := add!(table.key-sequence, key);
   end;
   next-method();
   new-value
 end method element-setter;
 
+// Update the key-sequence when keys are removed.
+//
+define method remove-key!
+    (table :: <ordered-table>, key :: <object>) => (present? :: <boolean>)
+  let keys-equal? :: <function> = table.key-test;
+  iterate loop (keys = table.key-sequence, prev = #f)
+    if (~empty?(keys))
+      let curr = keys.head;
+      let rest = keys.tail;
+      if (keys-equal?(curr, key))
+        if (prev)
+          prev.tail := rest;
+        else
+          table.key-sequence := rest;
+        end
+      else
+        loop(rest, keys);
+      end;
+    end;
+  end;
+  next-method()
+end method remove-key!;
 
 define class <ordered-string-table> (<ordered-table>)
 end;

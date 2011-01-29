@@ -89,9 +89,9 @@ define method current-line
   let curr = p.current-index;
   let epos = min(position(p.input-text, '\n', start: curr) | max,
                  position(p.input-text, '\r', start: curr) | max);
-  copy-sequence(p.input-text,
-                start: p.current-index - p.column-number + 1,
-                end: epos)
+  slice(p.input-text,
+        p.current-index - p.column-number + 1,
+        epos)
 end;
 
 /// Synopsis: Return a line that indicates which character 'current-index'
@@ -130,7 +130,7 @@ end;
 define method %parse-coil
     (p :: <coil-parser>) => (struct :: <struct>)
   let root = make(<struct>, name: "@root");
-  resolve-references(p, parse-struct-attributes(p, root), #());
+  resolve-references!(p, parse-struct-attributes(p, root), #());
   root
 end;
 
@@ -308,8 +308,7 @@ define method expect
         p.consume
       else
         parse-error(p, "Expected %= but got %=",
-                    string,
-                    copy-sequence(p.input-text, start: start, end: p.current-index));
+                    string, slice(p.input-text, start, p.current-index));
       end;
     end;
     eat-whitespace(p);
@@ -436,21 +435,23 @@ define method follow-links
     elseif (empty?(keys))
       struct
     else
-      let key = keys[0];
-      let rest = tail(keys);
+      let key = keys.head;
+      let rest = keys.tail;
       select (key by \=)
         "" =>          // We split on '.', so "..." turns into "", ""
           loop(struct.struct-parent, rest);
         "@root" =>
           loop(find-root(struct), rest);
         otherwise =>
-          let value = element(struct, key, default: #f)
-                      | parse-error(p, "Invalid link %=: %= is not present "
-                                       "as a key for %=.",
-                                    link.link-name, key, struct);
-          iff(empty?(rest),
-              value,
-              loop(value, rest));
+          let value = element(struct, key, default: unfound());
+          if (unfound?(value))
+            parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
+                        link.link-name, key, struct);
+          elseif (empty?(rest))
+            value
+          else
+            loop(value, rest)
+          end
       end select
     end
   end
@@ -647,17 +648,22 @@ Rules:
 
 /// Synopsis: Resolve @extends, @file, @delete, and @key references in 'struct'.
 ///
-define method resolve-references
+define method resolve-references!
     (p :: <coil-parser>, struct :: <struct>, seen :: <list>)
  => ()
-  for (value keyed-by key in struct)
+  // This loop modifies 'struct', so doesn't iterate over it directly.
+  for (key in key-sequence(struct))
+    let value = struct[key];
     select (key by starts-with?)
       "@extends" =>
-        resolve-extends(p, struct, value, pair(struct.full-name, seen));
+        resolve-extends!(p, struct, value, pair(struct.full-name, seen));
+        remove-key!(struct, key);
       "@file" =>
         extend(p, struct, value, seen);
+        remove-key!(struct, key);
       "@key@" =>
-        resolve-key(p, struct, key, value);
+        resolve-key!(p, struct, key, value);
+        remove-key!(struct, key);
       $delete =>
         // Ignore deletions here.  They are only used to prevent additions.
         #f;
@@ -678,12 +684,13 @@ define method resolve-references
           struct[key] := value;
           if (instance?(value, <struct>))
             // Do not add struct.full-name to 'seen' here.
-            resolve-references(p, value, seen);
+            resolve-references!(p, value, seen);
           end;
         end;
     end select;
-  end;
-end method resolve-references;
+  end for;
+  remove-key!(struct, $delete);
+end method resolve-references!;
 
 
 /// Synopsis: Extend 'struct' with the values in the struct pointed to by
@@ -691,7 +698,7 @@ end method resolve-references;
 /// Arguments:
 ///   seen  - A list of canonical names that have already been seen during
 ///           this recursion, to prevent loops.
-define method resolve-extends
+define method resolve-extends!
     (p :: <coil-parser>, struct :: <struct>, link :: <link>, seen :: <list>)
  => ()
   let target = follow-links(p, link, struct);
@@ -706,7 +713,7 @@ define method resolve-extends
   else
     extend(p, struct, target, pair(target.full-name, seen));
   end;
-end method resolve-extends;
+end method resolve-extends!;
 
 
 /// Synopsis: Extend 'struct' with the keys and values from 'extendee'.
@@ -717,7 +724,7 @@ define method extend
  => ()
   for (value keyed-by key in extendee)
     if (instance?(value, <struct>))
-      resolve-references(p, struct, seen);
+      resolve-references!(p, struct, seen);
     end;
     if (~key-exists?(struct, key) & ~deleted?(struct, key))
       struct[key] := value;
@@ -727,28 +734,40 @@ end method extend;
 
 
 /// Synopsis: Store a value for a compound key.  e.g., "a.b.c: 1"
-///
-define method resolve-key
+///           Note that this creates empty structs if any intervening keys
+///           don't exist.
+// TODO: It might be good to have a way to warn about intervening keys
+//       that don't exist, since it could be a mistake.
+define method resolve-key!
     (p :: <coil-parser>, struct :: <struct>, compound-key :: <string>, value)
  => ()
-  let key = unmake-compound-key(compound-key);
-  iterate loop (struct = struct, path = split(key, '.'))
-    let simple-key = path[0];
+  let link-name = unmake-compound-key(compound-key);
+  iterate loop (struct = struct,
+                path = as(<list>, split(link-name, '.')),
+                seen = #())
+    let simple-key = path.head;
     if (path.size = 1)
       if (~deleted?(struct, simple-key))
         struct[simple-key] := value;
       end;
     else
-      let sub-struct = element(struct, simple-key, default: #f);
-      if (instance?(sub-struct, <struct>))
-        loop(sub-struct, tail(path));
+      let sub-struct = element(struct, simple-key, default: unfound());
+      if (unfound?(sub-struct))
+        let sub-struct = make(<struct>, name: simple-key);
+        struct[simple-key] := sub-struct;
+        loop(sub-struct, path.tail, pair(simple-key, seen));
+
+      elseif (instance?(sub-struct, <struct>))
+        loop(sub-struct, path.tail, pair(simple-key, seen));
+
       else
         parse-error(p, "Invalid key, %=.  %= does not name a struct.",
-                    key, join(slice(split(key, '.'), 0, -path.size), "."));
+                    link-name,
+                    join(reverse(pair(simple-key, seen)), "."));
       end;
     end;
   end;
-end method resolve-key;
+end method resolve-key!;
 
 
 // These could go in (un)common-dylan along with a slice! and slice!-setter

@@ -199,8 +199,6 @@ define test test-follow-links ()
                     list("@root.child.grandchild", root, grandchild)))
     let (link-name, anchor, expected) = apply(values, item);
     let actual = follow-links(p, make(<link>, name: link-name), anchor);
-    test-output("actual = %s\n", actual.struct-name);
-    force-output(*standard-output*);
     check-equal(fmt("%= resolves correctly", link-name),
                 expected,
                 actual);

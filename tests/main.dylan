@@ -13,13 +13,13 @@ end;
 /// Synopsis: Make sure that the element-setter of the forward-iteration-protocol
 ///           for
 define test test-ordered-table-fip ()
-  let t = make(<struct>);
+  let t = make(<struct>, name: "s1");
   t["foo"] := 1;
   t["bar"] := 2;
   t["baz"] := 3;
   check-equal("key-sequence has 3 elements", t.key-sequence.size, 3);
 
-  let t2 = make(<struct>);
+  let t2 = make(<struct>, name: "s2");
   map-into(t2, method(x) x + 1 end, t);
   check-equal("foo", t2["foo"], 2);
   check-equal("bar", t2["bar"], 3);

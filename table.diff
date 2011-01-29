@@ -1,6 +1,6 @@
 Index: dylan/table.dylan
 ===================================================================
---- dylan/table.dylan	(revision 13033)
+--- dylan/table.dylan	(revision 13046)
 +++ dylan/table.dylan	(working copy)
 @@ -1092,7 +1092,7 @@
  //   apply(make, <standard-object-table>, initargs);
@@ -29,6 +29,15 @@ Index: dylan/table.dylan
      => new-value;
    check-type(new-value, element-type(table));
    puthash(new-value, table, key);
+@@ -1380,7 +1380,7 @@
+   end with-table-vector-locked;
+ end;
+ 
+-define sealed method remove-key! (table :: <table>, key)
++define method remove-key! (table :: <table>, key)
+   => present? :: <boolean>;
+   local method loop ()
+           let tv = table-vector(table);
 @@ -1724,7 +1724,7 @@
    end if;
  end;
@@ -38,3 +47,4 @@ Index: dylan/table.dylan
    => (initial-state		:: <iteration-state>,
        limit			:: <object>,
        next-state		:: <function>,
+
