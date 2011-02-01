@@ -13,7 +13,7 @@ License:   See LICENSE.txt in this distribution for details.
 //
 // During the first pass, keys begining with '@' are used as placeholders
 // for items that need to be resolved during the second pass.  This works
-// because '@' isn't valid in actual struct keys.
+// because '@' isn't a valid character in coil struct keys.
 
 // TODO:
 // * What are the intended semantics when a struct has both x and ~x?
@@ -415,11 +415,19 @@ define class <link> (<object>)
 end;
 
 
-/// Synopsis: Follow 'link' and return the value it points to.  'anchor'
-///           is the struct to which the link is relative, if not an
-///           absolute link reference such as @root.a.b.c.
+/// Synopsis: Follow 'link' and return the value it points to.
+/// If this traverses a struct that hasn't had its references expanded,
+/// it expands them first.
+/// Arguments:
+///   link   - The <link> to follow.
+///   anchor - The struct to which the link is relative, if not an
+///            absolute link reference such as @root.a.b.c.
+//
 // TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
 //       element(<struct>, key).
+//
+// TODO: Give error when two structs @extend each other.  This pr
+//
 define method follow-links
     (p :: <coil-parser>, link :: <link>, anchor :: <struct>)
  => (target :: <object>)
@@ -427,35 +435,50 @@ define method follow-links
   if (keys.head = "")
     keys := keys.tail;     // The initial dot is not used.
   end;
-  iterate loop (struct = anchor, keys = keys)
-    if (~struct)
-      parse-error(p, "Link %= tries to reference the parent of @root, "
-                     "which doesn't exist.",
-                  link.link-name);
-    elseif (empty?(keys))
-      struct
-    else
-      let key = keys.head;
-      let rest = keys.tail;
-      select (key by \=)
-        "" =>          // We split on '.', so "..." turns into "", ""
-          loop(struct.struct-parent, rest);
-        "@root" =>
-          loop(find-root(struct), rest);
-        otherwise =>
-          let value = element(struct, key, default: unfound());
-          if (unfound?(value))
-            parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
-                        link.link-name, key, struct);
-          elseif (empty?(rest))
-            value
-          else
-            loop(value, rest)
-          end
-      end select
-    end
-  end
+  iterate loop (struct = anchor, keys = keys, path = #())
+    case
+      ~struct =>
+        parse-error(p, "Link %= tries to reference the parent of @root, "
+                    "which doesn't exist.",
+                    link.link-name);
+      empty?(keys) =>
+        struct;    // Can be any value, not necessarily a <struct>.
+      ~instance?(struct, <struct>) =>
+        parse-error(p, "Link %= traverses %=, which is not a struct.",
+                    link.link-name,
+                    join(reverse(path), "."));
+      otherwise =>
+        if (struct ~= anchor & struct.has-references?)
+          // Must resolve references of structs through which the link
+          // passes, in case the expansion adds keys.
+          resolve-references!(p, struct, #());
+        end;
+        let key = keys.head;
+        let rest = keys.tail;
+        select (key by \=)
+          "" =>          // We split on '.', so "..." turns into "", ""
+            loop(struct.struct-parent, rest, pair(key, path));
+          "@root" =>
+            loop(find-root(struct), rest, pair(key, path));
+          otherwise =>
+            let value = element(struct, key, default: unfound());
+            if (unfound?(value))
+              parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
+                          link.link-name, key, struct);
+            elseif (empty?(rest))
+              value
+            else
+              loop(value, rest, pair(key, path))
+            end;
+        end select;
+    end case
+  end iterate
 end method follow-links;
+
+define method has-references?
+    (struct :: <struct>) => (_ :: <boolean>)
+  any?(rcurry(starts-with?, "@"), key-sequence(struct))
+end;
 
 
 /// Synopsis: Parse a link to another element in the configuration.
@@ -651,45 +674,47 @@ Rules:
 define method resolve-references!
     (p :: <coil-parser>, struct :: <struct>, seen :: <list>)
  => ()
-  // This loop modifies 'struct', so doesn't iterate over it directly.
-  for (key in key-sequence(struct))
-    let value = struct[key];
-    select (key by starts-with?)
-      "@extends" =>
-        resolve-extends!(p, struct, value, pair(struct.full-name, seen));
-        remove-key!(struct, key);
-      "@file" =>
-        extend(p, struct, value, seen);
-        remove-key!(struct, key);
-      "@key@" =>
-        resolve-key!(p, struct, key, value);
-        remove-key!(struct, key);
-      $delete =>
-        // Ignore deletions here.  They are only used to prevent additions.
-        #f;
-      otherwise =>
-        assert(key[0] ~= '@');
-        if (~deleted?(struct, key))
-          if (instance?(value, <link>))
-            let link :: <link> = value;
-            value := follow-links(p, link, struct);
-            if (instance?(value, <struct>) & descendant?(value, struct))
-              parse-error(p, "Link target %= is a descendant of containing struct.",
-                          link.link-name);
+  if (~member?(struct, seen))
+    // This loop modifies 'struct', so doesn't iterate over it directly.
+    for (key in key-sequence(struct))
+      let value = struct[key];
+      select (key by starts-with?)
+        "@extends" =>
+          resolve-extends!(p, struct, value, pair(struct, seen));
+          remove-key!(struct, key);
+        "@file" =>
+          extend(p, struct, value, seen);
+          remove-key!(struct, key);
+        "@key@" =>
+          resolve-key!(p, struct, key, value);
+          remove-key!(struct, key);
+        $delete =>
+          // Ignore deletions here.  They are only used to prevent additions.
+          #f;
+        otherwise =>
+          assert(key[0] ~= '@');
+          if (~deleted?(struct, key))
+            if (instance?(value, <link>))
+              let link :: <link> = value;
+              value := follow-links(p, link, struct);
+              if (instance?(value, <struct>) & descendant?(value, struct))
+                parse-error(p, "Link target %= is a descendant of containing struct.",
+                            link.link-name);
+              end;
+            end;
+            // TODO: This gets the order wrong.  It should be easy enough to add
+            //       an "insert" method for <ordered-table> later on.  Generally
+            //       people don't care about order for configs, so it can wait.
+            struct[key] := value;
+            if (instance?(value, <struct>))
+              // Do not add struct to 'seen' here.
+              resolve-references!(p, value, seen);
             end;
           end;
-          // TODO: This gets the order wrong.  It should be easy enough to add
-          //       an "insert" method for <ordered-table> later on.  Generally
-          //       people don't care about order for configs, so it can wait.
-          struct[key] := value;
-          if (instance?(value, <struct>))
-            // Do not add struct.full-name to 'seen' here.
-            resolve-references!(p, value, seen);
-          end;
-        end;
-    end select;
-  end for;
-  remove-key!(struct, $delete);
+      end select;
+    end for;
+    remove-key!(struct, $delete);
+  end if;
 end method resolve-references!;
 
 
@@ -699,19 +724,19 @@ end method resolve-references!;
 ///   seen  - A list of canonical names that have already been seen during
 ///           this recursion, to prevent loops.
 define method resolve-extends!
-    (p :: <coil-parser>, struct :: <struct>, link :: <link>, seen :: <list>)
+    (p :: <coil-parser>, containing-struct :: <struct>, link :: <link>, seen :: <list>)
  => ()
-  let target = follow-links(p, link, struct);
+  let target = follow-links(p, link, containing-struct);
   if (~instance?(target, <struct>))
     parse-error(p, "@extends target (%s) should be a struct but is a %s.",
                 link.link-name, target.object-class);
-  elseif (descendant?(target, struct))
+  elseif (descendant?(target, containing-struct))
     parse-error(p, "@extends target is a descendant of containing struct.");
-  elseif (member?(target.full-name, seen, test: \=))
+  elseif (member?(target, seen))
     parse-error(p, "@extends circularity: %s",
-                join(reverse(pair(target.full-name, seen)), " -> "));
+                join(reverse(pair(target, seen)), " -> ", key: full-name));
   else
-    extend(p, struct, target, pair(target.full-name, seen));
+    extend(p, containing-struct, target, pair(target, seen));
   end;
 end method resolve-extends!;
 
@@ -722,7 +747,9 @@ end method resolve-extends!;
 define method extend
     (p :: <coil-parser>, struct :: <struct>, extendee :: <struct>, seen :: <list>)
  => ()
-  for (value keyed-by key in extendee)
+  // Deep copy the struct being extended so that its sub-structs can be modified
+  // without affecting other places where it is extended.
+  for (value keyed-by key in deep-copy(extendee))
     if (instance?(value, <struct>))
       resolve-references!(p, struct, seen);
     end;

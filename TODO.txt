@@ -1,0 +1,23 @@
+Coil TO-DO List
+===============
+
+Parser
+======
+
+* Fix callers of "deleted?".  Instead I need to follow the $deleted
+  links and delete those elements.  This should make
+  test-extend-copies.one-a pass.
+
+Documentation
+=============
+
+Document the semantics of @extends, which are highly dependent on the
+implementation of the parser.  e.g., because it processes structs in
+the order they appear in the file, and processes @extends in a
+top-down fashion, any relative links inside a struct that is @extended
+but which access an ancestor struct that is outside of the @extended
+struct, may not reference the element the user expected.  This should
+probably just be an error.
+
+(Processing links in a bottom up fashion wouldn't make sense because
+they might depend on @extends having been processed already.)

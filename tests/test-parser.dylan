@@ -248,6 +248,30 @@ define method get-test-struct ()
              )
 end method get-test-struct;
 
+/*
+
+A: {
+    B: {
+        C: "arf"
+    }
+    D: "abc"
+}
+
+E: {
+    @extends: @root.A
+    B.C: "other"
+}
+# => E: { B: { C: "other" } D: "abc" }
+
+E: {
+    B.C: "other"
+    @extends: @root.A
+}
+# => E: { B: { C: "arf" } D: "abc" }
+# i.e., E.B is completely replaced by (a copy of) A.B
+
+*/
+
 define test test-extends-basic ()
   let tree = get-test-struct();
   check-equal("aaa", tree["A.a"], "a");
@@ -303,10 +327,11 @@ end test test-double-extend;
 /// Synopsis: Verify that when a struct is extended it is deep copied so that
 ///           multiple extensions can be modified independently.
 define test test-extend-copies ()
-  let text = "a: { aa: { aaa: 1 aab: 2 } }"
-             "b: { @extends: ..a aa.aaa: 3 ~aa.aab }"
-             "c: { @extends: ..a aa.aaa: 4 aa.aab: 5 }";
+  let text = "a: { aa: { aaa: 1 aab: 2 } }\n"
+             "b: { @extends: ..a aa.aaa: 3 ~aa.aab }\n"
+             "c: { @extends: ..a aa.aaa: 4 aa.aab: 5 }\n";
   let root = parse-coil(text);
+  break("b.aa.key-sequence = %s", root["b.aa"].key-sequence);
   check-equal("one-a", root["b.aa"].size, 1);
   check-equal("one-b", root["b.aa.aaa"], 3);
 

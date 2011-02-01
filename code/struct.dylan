@@ -9,8 +9,8 @@ License:   See LICENSE.txt in this distribution for details.
 ///           Iteration uses insertion order.
 ///
 define open class <ordered-table> (<table>)
-  // TODO: This should be a doubly-linked list so that deletion is cheaper.
   slot key-sequence :: <list> = #();
+  slot last-pair :: <list> = #();
 end;
 
 define method forward-iteration-protocol
@@ -54,7 +54,14 @@ define method element-setter
     (new-value :: <object>, table :: <ordered-table>, key :: <object>)
  => (new-value :: <object>)
   if (~key-exists?(table, key))
-    table.key-sequence := add!(table.key-sequence, key);
+    if (empty?(table.key-sequence))
+      table.key-sequence := list(key);
+      table.last-pair := table.key-sequence;
+    else
+      let new-last-pair = list(key);
+      table.last-pair.tail := new-last-pair;
+      table.last-pair := new-last-pair;
+    end;
   end;
   next-method();
   new-value
@@ -65,20 +72,27 @@ end method element-setter;
 define method remove-key!
     (table :: <ordered-table>, key :: <object>) => (present? :: <boolean>)
   let keys-equal? :: <function> = table.key-test;
+  let prev = #f;
   iterate loop (keys = table.key-sequence, prev = #f)
-    if (~empty?(keys))
+    if (~keys.empty?)
       let curr = keys.head;
       let rest = keys.tail;
       if (keys-equal?(curr, key))
         if (prev)
           prev.tail := rest;
-        else
+          if (rest.empty?)      // Deleted last element.
+            table.last-pair := prev;
+          end;
+        else                    // Deleting 1st element.
           table.key-sequence := rest;
-        end
+          if (rest.empty?)      // Deleted last element.
+            table.last-pair := #();
+          end;
+        end;
       else
         loop(rest, keys);
       end;
-    end;
+    end if;
   end;
   next-method()
 end method remove-key!;
@@ -189,6 +203,27 @@ define method deleted?
     (struct :: <struct>, key) => (deleted? :: <boolean>)
   member?(key, element(struct, $delete, default: #[]), test: \=)
 end;
+
+define method deep-copy
+    (struct :: <struct>, #key seen :: <list> = #(), signaler = error)
+ => (struct :: <struct>)
+  if (member?(struct, seen))
+    signaler("Struct cycle detected: %s",
+             join(reverse(seen), " -> ", key: full-name));
+  else
+    let new = make(<struct>, name: struct.struct-name);
+    for (value keyed-by key in struct)
+      new[key] := if (instance?(value, <struct>))
+                    deep-copy(value,
+                              seen: pair(struct, seen),
+                              signaler: signaler);
+                  else
+                    value
+                  end;
+    end;
+    new
+  end
+end method deep-copy;
 
 
 //// Outputting coil
