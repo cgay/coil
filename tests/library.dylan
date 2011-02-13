@@ -9,10 +9,13 @@ define library coil-test-suite
   use system;
   use testworks;
   use coil;
+  use regular-expressions;
 end library coil-test-suite;
 
 define module coil-test-suite
-  use common-dylan;
+  use common-dylan, exclude: { format-to-string };
+  use format;
+  use regular-expressions;
   use locators;
   use standard-io;
   use streams;

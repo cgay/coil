@@ -32,7 +32,6 @@ define test test-ordered-table-fip ()
   check-equal("current element set", current-element(t2, initial-state), 10);
 end test test-ordered-table-fip;
 
-
 define method main () => ()
   let filename = locator-name(as(<file-locator>, application-name()));
   if (split(filename, ".")[0] = "coil-test-suite")

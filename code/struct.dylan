@@ -118,9 +118,6 @@ end method table-protocol;
 //// Struct
 ////
 
-define constant $delete :: <string>
-  = "@delete";
-
 
 /// Synopsis: The core Coil data structure.  Back links to the parent struct
 ///           are maintained so that absolute references (i.e., @root...)
@@ -132,10 +129,10 @@ define open class <struct> (<ordered-string-table>)
     required-init-keyword: name:;
 end class <struct>;
 
-define method full-name
+define method struct-full-name
     (struct :: <struct>) => (full-name :: <string>)
   iff(struct.struct-parent,
-      concatenate(full-name(struct.struct-parent), ".", struct.struct-name),
+      concatenate(struct-full-name(struct.struct-parent), ".", struct.struct-name),
       struct.struct-name)
 end;
 
@@ -199,17 +196,12 @@ define method element
   end
 end method element;
 
-define method deleted?
-    (struct :: <struct>, key) => (deleted? :: <boolean>)
-  member?(key, element(struct, $delete, default: #[]), test: \=)
-end;
-
 define method deep-copy
     (struct :: <struct>, #key seen :: <list> = #(), signaler = error)
  => (struct :: <struct>)
   if (member?(struct, seen))
     signaler("Struct cycle detected: %s",
-             join(reverse(seen), " -> ", key: full-name));
+             join(reverse(seen), " -> ", key: struct-full-name));
   else
     let new = make(<struct>, name: struct.struct-name);
     for (value keyed-by key in struct)

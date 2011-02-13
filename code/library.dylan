@@ -36,6 +36,7 @@ define module coil
   create
     <struct>,
     struct-name,
+    struct-full-name,
     struct-parent;
 end module coil;
 

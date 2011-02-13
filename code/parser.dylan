@@ -4,22 +4,31 @@ Author: Carl Gay
 Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
-// This parser makes two passes.  During the first pass objects that
-// don't involve any links outside the struct are parsed, and most
-// struct keys are filled in.  The second pass resolves @extends,
-// @file, deletions, compound struct keys (i.e., a.b.c: foo) and
-// struct value links (i.e., foo: a.b.c).  This is necessary because
-// @extends and @file may change what a.b.c refers to.
-//
-// During the first pass, keys begining with '@' are used as placeholders
-// for items that need to be resolved during the second pass.  This works
-// because '@' isn't a valid character in coil struct keys.
+/*
 
-// TODO:
-// * What are the intended semantics when a struct has both x and ~x?
-//
-// * Keep track of the source location of items that are resolved during
-//   the second pass, for better error messages.
+This parser makes two passes.  During the first pass objects that
+don't involve any links outside the struct are parsed, and most
+struct keys are filled in.  The second pass resolves @extends,
+@file, deletions, compound struct keys (i.e., a.b.c: foo) and
+struct value links (i.e., foo: a.b.c).  This is necessary because
+@extends and @file may change what a.b.c refers to.
+
+During the first pass, keys begining with '@' are used as placeholders
+for items that need to be resolved during the second pass.  This works
+because '@' isn't a valid character in coil struct keys.
+
+A basic rule is that structs must be parsed in textual order.  Structs
+that appear in the source file textually before other structs should
+be fully parsed before those that appear later.  e.g., if a struct has
+both "x: y" and "~x" then the "winner" is whichever one appears last.
+
+TODO:
++ What are the intended semantics when a struct has both x and ~x?
+
++ Keep track of the source location of items that are resolved during
+  the second pass, for better error messages.
+
+*/
 
 define constant $whitespace :: <string>
   = " \t\n\r";
@@ -162,10 +171,8 @@ define method parse-struct-attributes
         #f;  // done
       '~' =>
         p.consume;
-        let deletions = element(struct, $delete, default: #f)
-                        | make(<stretchy-vector>);
-        add!(deletions, parse-link(p)); 
-        struct[$delete] := deletions;
+        let link :: <link> = parse-link(p);
+        struct[concatenate("@delete", link.link-name)] := link;
         loop(n);
       '@' =>
         p.consume;
@@ -656,18 +663,9 @@ end method parse-multi-line-string;
 
 
 //// Pass Two
+//// Resolve extension, deletion, compound keys (e.g., "x.y.z: 2"),
+//// and references (e.g., "x: y.z").
 
-/*
-
-Rules:
-. Any key, k or k.l.m, always sets the value it specifies.
-. Compound keys such as k.l.m must be set after @extends has been
-  processed, in case they override items in sub-structs created by
-  the @extends.
-. Similarly for deletions.
-. @extends never sets a value for a key that already exists.
-
-*/
 
 /// Synopsis: Resolve @extends, @file, @delete, and @key references in 'struct'.
 ///
@@ -676,7 +674,7 @@ define method resolve-references!
  => ()
   if (~member?(struct, seen))
     // This loop modifies 'struct', so doesn't iterate over it directly.
-    for (key in key-sequence(struct))
+    for (key in slice(struct.key-sequence, 0, #f))
       let value = struct[key];
       select (key by starts-with?)
         "@extends" =>
@@ -685,37 +683,62 @@ define method resolve-references!
         "@file" =>
           extend(p, struct, value, seen);
           remove-key!(struct, key);
-        "@key@" =>
+        "@key" =>
           resolve-key!(p, struct, key, value);
           remove-key!(struct, key);
-        $delete =>
-          // Ignore deletions here.  They are only used to prevent additions.
-          #f;
+        "@delete" =>
+          let link :: <link> = value;
+          delete-key!(p, struct, link);
         otherwise =>
           assert(key[0] ~= '@');
-          if (~deleted?(struct, key))
-            if (instance?(value, <link>))
-              let link :: <link> = value;
-              value := follow-links(p, link, struct);
-              if (instance?(value, <struct>) & descendant?(value, struct))
-                parse-error(p, "Link target %= is a descendant of containing struct.",
-                            link.link-name);
-              end;
+          if (instance?(value, <link>))
+            let link :: <link> = value;
+            value := follow-links(p, link, struct);
+            if (instance?(value, <struct>) & descendant?(value, struct))
+              parse-error(p, "Link target %= is a descendant of containing struct.",
+                          link.link-name);
             end;
-            // TODO: This gets the order wrong.  It should be easy enough to add
-            //       an "insert" method for <ordered-table> later on.  Generally
-            //       people don't care about order for configs, so it can wait.
-            struct[key] := value;
-            if (instance?(value, <struct>))
-              // Do not add struct to 'seen' here.
-              resolve-references!(p, value, seen);
-            end;
+          end;
+          // TODO: This gets the order wrong.  It should be easy enough to add
+          //       an "insert" method for <ordered-table> later on.  Generally
+          //       people don't care about order for configs, so it can wait.
+          struct[key] := value;
+          if (instance?(value, <struct>))
+            // Do not add struct to 'seen' here.
+            resolve-references!(p, value, seen);
           end;
       end select;
     end for;
-    remove-key!(struct, $delete);
   end if;
 end method resolve-references!;
+
+/// Synopsis: Delete the key designated by 'link', which is relative to 'struct'.
+///
+define method delete-key!
+    (p :: <coil-parser>, struct :: <struct>, link :: <link>)
+ => ()
+  let path = as(<list>, split(link.link-name, '.'));
+  iterate loop (struct = struct, path = path, seen = #())
+    if (empty?(path.tail))
+      remove-key!(struct, path.head);
+    else
+      let child = element(struct, path.head, default: unfound());
+      case
+        unfound?(child) =>
+          parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
+                      link.link-name,
+                      join(reverse(seen), "."),
+                      struct);
+        ~instance?(child, <struct>) =>
+          parse-error(p, "Invalid link %=: %= does not name a struct.",
+                      link.link-name,
+                      join(reverse(seen), "."));
+        otherwise =>
+          loop(child, path.tail, pair(path.head, seen));
+      end case;
+    end;
+  end;
+end method delete-key!;
 
 
 /// Synopsis: Extend 'struct' with the values in the struct pointed to by
@@ -734,7 +757,7 @@ define method resolve-extends!
     parse-error(p, "@extends target is a descendant of containing struct.");
   elseif (member?(target, seen))
     parse-error(p, "@extends circularity: %s",
-                join(reverse(pair(target, seen)), " -> ", key: full-name));
+                join(reverse(pair(target, seen)), " -> ", key: struct-full-name));
   else
     extend(p, containing-struct, target, pair(target, seen));
   end;
@@ -747,13 +770,17 @@ end method resolve-extends!;
 define method extend
     (p :: <coil-parser>, struct :: <struct>, extendee :: <struct>, seen :: <list>)
  => ()
-  // Deep copy the struct being extended so that its sub-structs can be modified
-  // without affecting other places where it is extended.
-  for (value keyed-by key in deep-copy(extendee))
+  for (value keyed-by key in extendee)
     if (instance?(value, <struct>))
-      resolve-references!(p, struct, seen);
+      // Deep copy any structs in the extendee so that they can be
+      // modified without affecting other places where they're extended.
+      let child-struct :: <struct> = deep-copy(value);
+
+      // Note that the parent of child-struct was set by the first pass, so
+      // references are resolved relative to where it occurs in the text.
+      resolve-references!(p, child-struct, seen);
     end;
-    if (~key-exists?(struct, key) & ~deleted?(struct, key))
+    if (~key-exists?(struct, key))
       struct[key] := value;
     end;
   end;
@@ -774,13 +801,11 @@ define method resolve-key!
                 seen = #())
     let simple-key = path.head;
     if (path.size = 1)
-      if (~deleted?(struct, simple-key))
-        struct[simple-key] := value;
-      end;
+      struct[simple-key] := value;
     else
       let sub-struct = element(struct, simple-key, default: unfound());
       if (unfound?(sub-struct))
-        let sub-struct = make(<struct>, name: simple-key);
+        let sub-struct = make(<struct>, name: simple-key, parent: struct);
         struct[simple-key] := sub-struct;
         loop(sub-struct, path.tail, pair(simple-key, seen));
 
