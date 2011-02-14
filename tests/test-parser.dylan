@@ -1,7 +1,7 @@
 Module: coil-test-suite
 Synopsis: Tests for the Coil parser
 Author: Carl Gay
-Copyright: Copyright (c) 2010 Carl L Gay.  All rights reserved.
+Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 define suite parser-test-suite ()
