@@ -212,9 +212,9 @@ define method parse-struct-attributes
         end select;
         loop(n);
       otherwise =>
-        let key = parse-key(p);
+        let (key, simple-key) = parse-key(p);
         expect(p, "", ":", "");
-        let value = parse-any(p, key: key);
+        let value = parse-any(p, key: simple-key);
         struct[key] := value;
         if (instance?(value, <struct>) & ~value.struct-parent)
           value.struct-parent := struct;
@@ -356,7 +356,8 @@ end;
 ///           as "a" or a compound identifier such as "a.b.c".  Compound
 ///           identifiers are resolved during the second pass.
 define method parse-key
-    (p :: <coil-parser>) => (key :: <string>)
+    (p :: <coil-parser>)
+ => (key :: <string>, simple-key :: false-or(<string>))
   let match = regex-search($extended-key-regex, p.input-text,
                            start: p.current-index);
   if (match)
@@ -364,9 +365,10 @@ define method parse-key
     p.current-index := epos;
     adjust-column-number(p);
     if (member?('.', key))
-      make-compound-key(key)
+      values(make-compound-key(key),
+             elt(split(key, '.'), -1))
     else
-      key
+      values(key, key)
     end
   else
     parse-error(p, "Struct key expected");
@@ -853,5 +855,11 @@ end;
 define method ends-with?
     (thing :: <string>, suffix :: <string>) => (yes? :: <boolean>)
   slice(thing, -suffix.size, #f) = suffix
+end;
+
+// Allow negative indexes.
+define method elt
+    (seq :: <sequence>, index :: <integer>) => (element :: <object>)
+  seq[iff(index < 0, seq.size + index, index)]
 end;
 
