@@ -129,6 +129,15 @@ define open class <struct> (<ordered-string-table>)
     required-init-keyword: name:;
 end class <struct>;
 
+define method print-object
+    (struct :: <struct>, stream :: <stream>)
+ => ()
+  format(stream, "<struct %s (%d item%s)>",
+         struct.struct-full-name,
+         struct.size,
+         iff(struct.size = 1, "", "s"));
+end;
+
 define method struct-full-name
     (struct :: <struct>) => (full-name :: <string>)
   iff(struct.struct-parent,

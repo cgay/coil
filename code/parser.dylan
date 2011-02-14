@@ -423,6 +423,12 @@ define class <link> (<object>)
     required-init-keyword: name:;
 end;
 
+define method print-object
+    (link :: <link>, stream :: <stream>)
+ => ()
+  format(stream, "<link to %s>", link.link-name);
+end;
+
 
 /// Synopsis: Follow 'link' and return the value it points to.
 /// If this traverses a struct that hasn't had its references expanded,
@@ -691,6 +697,7 @@ define method resolve-references!
         "@delete" =>
           let link :: <link> = value;
           delete-key!(p, struct, link);
+          remove-key!(struct, key);  // Delete the temp "@deleteX" key.
         otherwise =>
           assert(key[0] ~= '@');
           if (instance?(value, <link>))
@@ -715,6 +722,7 @@ define method resolve-references!
 end method resolve-references!;
 
 /// Synopsis: Delete the key designated by 'link', which is relative to 'struct'.
+///           Also delete the temporary @deleteX key.
 ///
 define method delete-key!
     (p :: <coil-parser>, struct :: <struct>, link :: <link>)

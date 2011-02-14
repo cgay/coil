@@ -50,6 +50,7 @@ define module %coil
   use format;
   use locators;
   use pprint;
+  use print;
   use regular-expressions;
   use simple-parser;
   use streams;
