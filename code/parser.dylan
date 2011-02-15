@@ -694,6 +694,9 @@ define method resolve-references!
         "@key" =>
           resolve-key!(p, struct, key, value);
           remove-key!(struct, key);
+          if (instance?(value, <struct>))
+            resolve-references!(p, value, seen);
+          end;
         "@delete" =>
           let link :: <link> = value;
           delete-key!(p, struct, link);
@@ -812,6 +815,9 @@ define method resolve-key!
     let simple-key = path.head;
     if (path.size = 1)
       struct[simple-key] := value;
+      if (instance?(value, <struct>))
+        value.struct-parent := struct;
+      end;
     else
       let sub-struct = element(struct, simple-key, default: unfound());
       if (unfound?(sub-struct))
