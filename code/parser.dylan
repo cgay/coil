@@ -172,29 +172,28 @@ define method parse-struct-attributes
       '~' =>
         p.consume;
         let link :: <link> = parse-link(p);
-        struct[concatenate("@delete", link.link-name)] := link;
+        struct[make-compound-key("@delete@", link.link-name)] := link;
         loop(n);
       '@' =>
         p.consume;
         select (p.lookahead)
           'e' =>
             expect(p, "extends", ":");
-            let key = format-to-string("@extends-%d", n);
+            let key = make-compound-key("@extends@", integer-to-string(n));
             struct[key] := parse-link(p);
             loop(n + 1);
           'f' =>
             expect(p, "file", ":");
             let filename = parse-any(p);
+            let key = make-compound-key("@file@", integer-to-string(n));
             select (filename by instance?)
               <string> =>
                 // @file: "foo.coil"
-                let key = format-to-string("@file-%d", n);
                 struct[key] := parse-coil(as(<file-locator>, filename));
                 loop(n + 1);
               <sequence> =>
                 // @file: [ "foo.coil" @root.a.b ]
                 let (filename, path) = apply(values, filename);
-                let key = format-to-string("@file-%d", n);
                 let file-struct = parse-coil(as(<file-locator>, filename));
                 let target :: <struct> = file-struct[path];
                 target.struct-parent := struct;
@@ -206,7 +205,7 @@ define method parse-struct-attributes
             end select;
           'm' =>
             expect(p, "map", ":");
-            parse-error(p, "@map is not supported.  Do you _really_ need it???");
+            parse-error(p, "@map is not supported.");
           otherwise =>
             parse-error(p, "Unrecognized special attribute");
         end select;
@@ -365,7 +364,7 @@ define method parse-key
     p.current-index := epos;
     adjust-column-number(p);
     if (member?('.', key))
-      values(make-compound-key(key),
+      values(make-compound-key("@key@", key),
              elt(split(key, '.'), -1))
     else
       values(key, key)
@@ -376,22 +375,21 @@ define method parse-key
 end method parse-key;
 
 define method make-compound-key
-    (key :: <string>) => (compound-key :: <string>)
+    (prefix :: <string>, key :: <string>)
+ => (compound-key :: <string>)
   // This feels a bit hackish, but is necessary because dot ('.') is treated
   // specially by element(<struct>, foo).
-  concatenate("@key@", map(method (c)
-                             iff(c = '.', '@', c)
-                           end,
-                           key))
+  assert(prefix.size > 0 & prefix[0] = '@');
+  concatenate(prefix, map(method (c)
+                            iff(c = '.', '@', c)
+                          end,
+                          key))
 end;
 
 define method unmake-compound-key
     (compound-key :: <string>) => (key :: <string>)
-  assert(compound-key.size > 5 & "@key@" = copy-sequence(compound-key, end: 5));
-  map(method (c)
-        iff(c = '@', '.', c)
-      end,
-      copy-sequence(compound-key, start: 5))
+  assert(compound-key.size > 0 & compound-key[0] = '@');
+  join(slice(split(compound-key, '@'), 2, #f), ".")
 end;
 
 /// Synopsis: Fixup the parser's 'column-number' slot based on the
@@ -463,7 +461,7 @@ define method follow-links
                     link.link-name,
                     join(reverse(path), "."));
       otherwise =>
-        if (struct ~= anchor & struct.has-references?)
+        if (struct ~== anchor & struct.has-references?)
           // Must resolve references of structs through which the link
           // passes, in case the expansion adds keys.
           resolve-references!(p, struct, #());
@@ -685,22 +683,22 @@ define method resolve-references!
     for (key in slice(struct.key-sequence, 0, #f))
       let value = struct[key];
       select (key by starts-with?)
-        "@extends" =>
+        "@extends@" =>
           resolve-extends!(p, struct, value, pair(struct, seen));
           remove-key!(struct, key);
-        "@file" =>
+        "@file@" =>
           extend(p, struct, value, seen);
           remove-key!(struct, key);
-        "@key" =>
+        "@key@" =>
           resolve-key!(p, struct, key, value);
           remove-key!(struct, key);
           if (instance?(value, <struct>))
             resolve-references!(p, value, seen);
           end;
-        "@delete" =>
+        "@delete@" =>
           let link :: <link> = value;
           delete-key!(p, struct, link);
-          remove-key!(struct, key);  // Delete the temp "@deleteX" key.
+          remove-key!(struct, key);  // Delete the temp "@delete@" key.
         otherwise =>
           assert(key[0] ~= '@');
           if (instance?(value, <link>))
@@ -725,7 +723,6 @@ define method resolve-references!
 end method resolve-references!;
 
 /// Synopsis: Delete the key designated by 'link', which is relative to 'struct'.
-///           Also delete the temporary @deleteX key.
 ///
 define method delete-key!
     (p :: <coil-parser>, struct :: <struct>, link :: <link>)
@@ -754,8 +751,8 @@ define method delete-key!
 end method delete-key!;
 
 
-/// Synopsis: Extend 'struct' with the values in the struct pointed to by
-///           'link'.
+/// Synopsis: Extend 'containing-struct' with the values in the struct
+///           named by 'link'.
 /// Arguments:
 ///   seen  - A list of canonical names that have already been seen during
 ///           this recursion, to prevent loops.
@@ -787,15 +784,13 @@ define method extend
     if (instance?(value, <struct>))
       // Deep copy any structs in the extendee so that they can be
       // modified without affecting other places where they're extended.
-      let child-struct :: <struct> = deep-copy(value);
+      value := deep-copy(value);
 
       // Note that the parent of child-struct was set by the first pass, so
       // references are resolved relative to where it occurs in the text.
-      resolve-references!(p, child-struct, seen);
+      resolve-references!(p, value, seen);
     end;
-    if (~key-exists?(struct, key))
-      struct[key] := value;
-    end;
+    struct[key] := value;
   end;
 end method extend;
 
@@ -872,6 +867,11 @@ define method ends-with?
 end;
 
 // Allow negative indexes.
+// The main reason this is worth having around is for when the expression
+// for getting the sequence is long.  It's not useful for x because
+// x[x.size - 1] is short, but for my-object.the-foo-sequence it starts
+// to look pretty bad.
+//
 define method elt
     (seq :: <sequence>, index :: <integer>) => (element :: <object>)
   seq[iff(index < 0, seq.size + index, index)]

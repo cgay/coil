@@ -78,6 +78,10 @@ define module %coil
   export
     struct-parent-setter;
 
+  // Temp. This should be moved to common-dylan.
+  export
+    <invalid-key-error>;
+
 end module %coil;
 
 

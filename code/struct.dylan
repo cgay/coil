@@ -163,6 +163,8 @@ define method find-root
       struct)
 end;
 
+define constant $internal-unfound = list("iUNFOUND");
+
 /// Synopsis: Retrieve an attribute value from a <struct>.
 ///
 /// Arguments:
@@ -174,32 +176,46 @@ end;
 ///              followed back down to the target.
 ///
 define method element
-    (struct :: <struct>, key :: <string>, #key default = $unfound)
+    (struct :: <struct>, key :: <string>, #key default = $internal-unfound)
  => (object)
+  local method find-root (s)
+          iff(s.struct-parent, find-root(s.struct-parent), s)
+        end;
   if (member?('.', key))
     iterate loop (struct = struct,
-                  parts = as(<list>, split(key, '.')),
+                  path = as(<list>, split(key, '.')),
                   seen = #())
-      let subkey = parts.head;
-      if (subkey = "@root" & ~empty?(seen))
-        error("@root may only appear at the beginning of a coil path: %s", key);
-      end;
-      let value = element(struct, subkey, default: default);
-      if (parts.size = 1)
+      let subkey = path.head;
+      let value = element(struct, subkey, default: $internal-unfound);
+      if (value == $internal-unfound)
+        if (default == $internal-unfound)
+          let extra = iff(empty?(seen),
+                          "",
+                          format-to-string(" (because %= doesn't exist)",
+                                           join(path, ".")));
+          error(make(<invalid-key-error>,
+                     format-string: "The key %= does not exist%s.",
+                     format-arguments: list(key, extra)));
+        else
+          default
+        end
+      elseif (path.size = 1)
         value
       elseif (~instance?(value, <struct>))
-        error("%s is an invalid reference because %s does not name a struct.",
-              key, join(reverse(seen), "."));
+        if (supplied?(default))
+          // This could conceivably be an error
+          default
+        else
+          error(make(<invalid-key-error>,
+                     format-string: "The key %= does not exist. (%= is not a struct.)",
+                     format-arguments: list(key, join(path, "."))));
+        end
       else
-        loop(value, parts.tail, pair(subkey, seen))
+        loop(value, path.tail, pair(subkey, seen))
       end
     end
   elseif (key = "@root")
-    iterate loop (struct = struct)
-      iff(struct.struct-parent,
-          loop(struct.struct-parent),
-          struct)
-    end
+    find-root(struct)
   else
     next-method()
   end
@@ -212,7 +228,9 @@ define method deep-copy
     signaler("Struct cycle detected: %s",
              join(reverse(seen), " -> ", key: struct-full-name));
   else
-    let new = make(<struct>, name: struct.struct-name);
+    let new = make(<struct>,
+                   name: struct.struct-name,
+                   parent: struct.struct-parent);
     for (value keyed-by key in struct)
       new[key] := if (instance?(value, <struct>))
                     deep-copy(value,

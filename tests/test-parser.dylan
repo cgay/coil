@@ -280,14 +280,11 @@ define test test-extends-basic ()
   check-equal("size", tree["A"].size, 3);
 end;
 
-// temp -- Intended to fail, until I figure out what the correct error should be.
-define constant <key-error> = <arithmetic-error>;
-
 define test test-extends-and-delete ()
   let tree = get-test-struct();
   check-equal("aaa", tree["B.a"], "a");
   check-equal("bbb", tree["B.b"], "b");
-  check-condition("ccc", <key-error>, tree["B.c"]);
+  check-condition("ccc", <invalid-key-error>, tree["B.c"]);
   check-equal("ddd", tree["B.e"], #["one", 2, "omg three"]);
   check-equal("size", tree["B"].size, 3);
 end;
@@ -303,7 +300,7 @@ define test test-extends-2 ()
   let tree = get-test-struct();
   check-equal("aaa", tree["D.a"], "a");
   check-equal("bbb", tree["D.b"], "b");
-  check-condition("ccc", <key-error>, tree["D.c"]);
+  check-condition("ccc", <invalid-key-error>, tree["D.c"]);
   check-equal("ddd", tree["D.e"], #["one", 2, "omg three"]);
   check-equal("size", tree["D"].size, 3);
 end;
@@ -331,7 +328,6 @@ define test test-extend-copies ()
              "b: { @extends: ..a aa.aaa: 3 ~aa.aab }\n"
              "c: { @extends: ..a aa.aaa: 4 aa.aab: 5 }\n";
   let root = parse-coil(text);
-  break("b.aa.key-sequence = %s", root["b.aa"].key-sequence);
   check-equal("one-a", root["b.aa"].size, 1);
   check-equal("one-b", root["b.aa.aaa"], 3);
 
