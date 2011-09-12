@@ -1,12 +1,25 @@
 Coil TO-DO List
 ===============
 
+General
+=======
+
+* json is almost a subset of coil.  Investigate how difficult it would
+  be to make it work as a json parser as well.
+
+* Google protobufs http://code.google.com/p/protobuf/ also have a
+  similar syntax and may be worth taking a closer look at for
+  comparison.  In particular, it might be cool to add optional type
+  specifications.
+
+
 Parser
 ======
 
 * Fix callers of "deleted?".  Instead I need to follow the $deleted
   links and delete those elements.  This should make
   test-extend-copies.one-a pass.
+
 
 Documentation
 =============
