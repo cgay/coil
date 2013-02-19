@@ -1,7 +1,7 @@
 Module: %coil
 Synopsis: An ordered table class to represent Coil structs.
 Author: Carl Gay
-Copyright: Copyright (c) 2011 Carl L Gay.  All rights reserved.
+Copyright: Copyright (c) 2013 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 /// Synopsis: A table that keeps track of the order in which elements
