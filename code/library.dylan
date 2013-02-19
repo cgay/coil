@@ -12,6 +12,7 @@ define library coil
   use io;
   use regular-expressions;
   use simple-parser;
+  use strings;
   use system;
   use uncommon-dylan;
 
@@ -54,6 +55,8 @@ define module %coil
   use regular-expressions;
   use simple-parser;
   use streams;
+  use strings,
+    import: { ends-with?, starts-with? };
   use table-extensions,
     import: { string-hash };
   use uncommon-dylan;
