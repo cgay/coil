@@ -56,8 +56,8 @@ define class <none> (<object>) end;
 define constant $none :: <none> = make(<none>);
 
 define class <coil-parser> (<object>)
-  // Source is for error reporting only.  It could be a file name, a stream, etc.
-  //constant slot input-source :: <object>, required-init-keyword: source:;
+  constant slot source-locator :: false-or(<file-locator>) = #f,
+    init-keyword: source:;
 
   // Text is the entire original coil source text.
   constant slot input-text :: <string> = "", required-init-keyword: text:;
@@ -121,19 +121,19 @@ define method parse-coil
     (source :: <locator>) => (coil :: <struct>)
   with-open-file (stream = source, direction: input:)
     %parse-coil(make(<coil-parser>,
-                     source: as(<string>, source),
+                     source: source,
                      text: read-to-end(stream)))
   end
 end;
 
 define method parse-coil
     (source :: <stream>) => (coil :: <struct>)
-  %parse-coil(make(<coil-parser>, source: source, text: read-to-end(source)))
+  %parse-coil(make(<coil-parser>, text: read-to-end(source)))
 end;
 
 define method parse-coil
     (source :: <string>) => (coil :: <struct>)
-  %parse-coil(make(<coil-parser>, source: source, text: source))
+  %parse-coil(make(<coil-parser>, text: source))
 end;
 
 define method %parse-coil
@@ -189,7 +189,14 @@ define method parse-struct-attributes
             select (filename by instance?)
               <string> =>
                 // @file: "foo.coil"
-                struct[key] := parse-coil(as(<file-locator>, filename));
+                // TODO(cgay): This should really merge against the current
+                // pathname, not the original pathname passed to the parser.
+                // i.e., nested @file links won't use the correct relative path.
+                let file = as(<file-locator>, filename);
+                if (p.source-locator)
+                  file := merge-locators(file, p.source-locator);
+                end;
+                struct[key] := parse-coil(file);
                 loop(n + 1);
               <sequence> =>
                 // @file: [ "foo.coil" @root.a.b ]

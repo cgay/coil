@@ -343,12 +343,10 @@ end;
 
 define method make-test-locator
     (filename :: <string>) => (locator :: <locator>)
-  // TODO: This is temporary (obviously).  The plan is to add a --config
-  //       argument to Testworks that will allow a mapping between libraries
-  //       and the root of their source tree to be specified, so that data
-  //       files that are distributed with the project can be found.
+  // TODO: This is temporary (obviously).  Need a way to associate
+  // data files with test projects.
   merge-locators(as(<file-locator>, filename),
-                 as(<directory-locator>, "c:/cgay/dylan/trunk/libraries/coil/"))
+                 as(<directory-locator>, "/home/cgay/dylan/src/coil/"))
 end;
 
 
