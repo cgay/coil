@@ -57,7 +57,7 @@ define constant $none :: <none> = make(<none>);
 
 define class <coil-parser> (<object>)
   // Source is for error reporting only.  It could be a file name, a stream, etc.
-  constant slot input-source :: <object>, required-init-keyword: source:;
+  //constant slot input-source :: <object>, required-init-keyword: source:;
 
   // Text is the entire original coil source text.
   constant slot input-text :: <string> = "", required-init-keyword: text:;
@@ -439,7 +439,7 @@ end;
 // TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
 //       element(<struct>, key).
 //
-// TODO: Give error when two structs @extend each other.  This pr
+// TODO: Give error when two structs @extend each other.
 //
 define method follow-links
     (p :: <coil-parser>, link :: <link>, anchor :: <struct>)

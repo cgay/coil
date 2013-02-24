@@ -4,128 +4,15 @@ Author: Carl Gay
 Copyright: Copyright (c) 2013 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
-/// Synopsis: A table that keeps track of the order in which elements
-///           are added.  Replaced keys retain their original ordering.
-///           Iteration uses insertion order.
+/// Synopsis: The core Coil data structure.  Maintains an ordered mapping
+///   of key/value pairs. Back links to the parent struct are maintained
+///   so that absolute references (i.e., @root...) can be determined.
 ///
-define open class <ordered-table> (<table>)
-  slot key-sequence :: <list> = #();
-  slot last-pair :: <list> = #();
-end;
-
-define method forward-iteration-protocol
-    (c :: <ordered-table>)
- => (initial-state :: <integer>, limit :: <integer>,
-     next-state :: <function>, finished-state? :: <function>,
-     current-key :: <function>,
-     current-element :: <function>, current-element-setter :: <function>,
-     copy-state :: <function>)
-  values(0,                  // initial state
-         c.size,             // limit
-         // next state
-         method (t :: <ordered-table>, index :: <integer>) => (state :: <integer>)
-           index + 1
-         end,
-         // finished-state?
-         method (t :: <ordered-table>, state :: <integer>, limit :: <integer>)
-             => (finished? :: <boolean>)
-           state = limit
-         end,
-         // current-key
-         method (t :: <ordered-table>, state :: <integer>) => (key :: <object>)
-           t.key-sequence[state]
-         end,
-         // current-element
-         method (t :: <ordered-table>, state :: <integer>) => (key :: <object>)
-           t[t.key-sequence[state]]
-         end,
-         // current-element-setter
-         method (value :: <object>, t :: <ordered-table>, state :: <integer>)
-             => (value :: <object>)
-           t[t.key-sequence[state]] := value
-         end,
-         // copy-state
-         method (t :: <ordered-table>, state :: <integer>) => (state :: <integer>)
-           state
-         end)
-end method forward-iteration-protocol;
-
-define method element-setter
-    (new-value :: <object>, table :: <ordered-table>, key :: <object>)
- => (new-value :: <object>)
-  if (~key-exists?(table, key))
-    if (empty?(table.key-sequence))
-      table.key-sequence := list(key);
-      table.last-pair := table.key-sequence;
-    else
-      let new-last-pair = list(key);
-      table.last-pair.tail := new-last-pair;
-      table.last-pair := new-last-pair;
-    end;
-  end;
-  next-method();
-  new-value
-end method element-setter;
-
-// Update the key-sequence when keys are removed.
-//
-define method remove-key!
-    (table :: <ordered-table>, key :: <object>) => (present? :: <boolean>)
-  let keys-equal? :: <function> = table.key-test;
-  let prev = #f;
-  iterate loop (keys = table.key-sequence, prev = #f)
-    if (~keys.empty?)
-      let curr = keys.head;
-      let rest = keys.tail;
-      if (keys-equal?(curr, key))
-        if (prev)
-          prev.tail := rest;
-          if (rest.empty?)      // Deleted last element.
-            table.last-pair := prev;
-          end;
-        else                    // Deleting 1st element.
-          table.key-sequence := rest;
-          if (rest.empty?)      // Deleted last element.
-            table.last-pair := #();
-          end;
-        end;
-      else
-        loop(rest, keys);
-      end;
-    end if;
-  end;
-  next-method()
-end method remove-key!;
-
-define class <ordered-string-table> (<ordered-table>)
-end;
-
-// This must be consistent with table-protocol.
-define method key-test
-    (t :: <ordered-string-table>) => (test :: <function>)
-  \=
-end;
-
-// The first value returned must be consistent with key-test.
-define method table-protocol
-    (table :: <ordered-string-table>)
- => (test :: <function>, hash :: <function>);
-  values(\=, string-hash)
-end method table-protocol;
-
-
-////
-//// Struct
-////
-
-
-/// Synopsis: The core Coil data structure.  Back links to the parent struct
-///           are maintained so that absolute references (i.e., @root...)
-///           can be determined.
-define open class <struct> (<ordered-string-table>)
+define open class <struct> (<mutable-explicit-key-collection>)
+  slot struct-entries :: <list> = #();
   slot struct-parent :: false-or(<struct>) = #f,
     init-keyword: parent:;
-  slot struct-name :: <string>,
+  constant slot struct-name :: <string>,
     required-init-keyword: name:;
 end class <struct>;
 
@@ -134,14 +21,119 @@ define method print-object
  => ()
   format(stream, "<struct %s (%d item%s)>",
          struct.struct-full-name,
-         struct.size,
+         struct.struct-entries.size,
          iff(struct.size = 1, "", "s"));
+end;
+
+define class <entry> (<object>)
+  constant slot entry-key :: <string>, required-init-keyword: key:;
+  slot entry-value :: <object>, required-init-keyword: value:;
+end;
+
+define inline function find-entry
+    (lst :: <list>, key :: <string>)
+ => (entry :: false-or(<entry>), index :: <integer>)
+  iterate loop (lst = lst, index = 0)
+    if (empty?(lst))
+      values(#f, -1)
+    else
+      let entry = lst.head;
+      if (entry.entry-key = key)
+        values(entry, index)
+      else
+        loop(lst.tail, index + 1)
+      end
+    end
+  end
+end function find-entry;
+
+define method forward-iteration-protocol
+    (c :: <struct>)
+ => (initial-state :: <integer>, limit :: <integer>,
+     next-state :: <function>, finished-state? :: <function>,
+     current-key :: <function>,
+     current-element :: <function>, current-element-setter :: <function>,
+     copy-state :: <function>)
+  values(0,                  // initial state
+         c.size,             // limit
+         // next state
+         method (t :: <struct>, index :: <integer>) => (state :: <integer>)
+           index + 1
+         end,
+         // finished-state?
+         method (t :: <struct>, state :: <integer>, limit :: <integer>)
+             => (finished? :: <boolean>)
+           state = limit
+         end,
+         // current-key
+         method (t :: <struct>, state :: <integer>) => (key :: <object>)
+           t.struct-entries[state].entry-key
+         end,
+         // current-element
+         method (t :: <struct>, state :: <integer>) => (key :: <object>)
+           t.struct-entries[state].entry-value
+         end,
+         // current-element-setter
+         method (value :: <object>, t :: <struct>, state :: <integer>)
+             => (value :: <object>)
+           t.struct-entries[state].entry-value := value
+         end,
+         // copy-state
+         method (t :: <struct>, state :: <integer>) => (state :: <integer>)
+           state
+         end)
+end method forward-iteration-protocol;
+
+define method key-sequence
+    (struct :: <struct>) => (v :: <vector>)
+  let v = make(<vector>, size: struct.size);
+  for (i from 0 below v.size,
+       entry in struct.struct-entries)
+    v[i] := entry.entry-key
+  end;
+  v
+end method key-sequence;
+
+define method size
+    (struct :: <struct>) => (size :: <integer>)
+  struct.struct-entries.size
+end;
+
+define method element-setter
+    (new-value :: <object>, struct :: <struct>, key :: <string>)
+ => (new-value :: <object>)
+  let entry = find-entry(struct.struct-entries, key);
+  if (entry)
+    entry.entry-value := new-value;
+  else
+    let entry = make(<entry>, key: key, value: new-value);
+    struct.struct-entries := add!(struct.struct-entries, entry);
+  end;
+  new-value
+end method element-setter;
+
+define method remove-key!
+    (struct :: <struct>, key :: <object>) => (present? :: <boolean>)
+  let content :: <list> = struct.struct-entries;
+  let (entry, index) = find-entry(content, key);
+  if (entry)
+    // TODO(cgay): Why isn't remove-key! defined for <stretchy-vector> or <list>?
+    struct.struct-entries
+      := concatenate(copy-sequence(content, end: index),
+                     copy-sequence(content, start: index + 1));
+    #t
+  end
+end method remove-key!;
+
+define method key-test
+    (t :: <struct>) => (test :: <function>)
+  \=
 end;
 
 define method struct-full-name
     (struct :: <struct>) => (full-name :: <string>)
   iff(struct.struct-parent,
-      concatenate(struct-full-name(struct.struct-parent), ".", struct.struct-name),
+      concatenate(struct.struct-parent.struct-full-name, ".", struct.struct-name),
       struct.struct-name)
 end;
 
@@ -232,13 +224,11 @@ define method deep-copy
                    name: struct.struct-name,
                    parent: struct.struct-parent);
     for (value keyed-by key in struct)
-      new[key] := if (instance?(value, <struct>))
-                    deep-copy(value,
-                              seen: pair(struct, seen),
-                              signaler: signaler);
-                  else
-                    value
-                  end;
+      new[key] := iff(instance?(value, <struct>),
+                      deep-copy(value,
+                                seen: pair(struct, seen),
+                                signaler: signaler),
+                      value);
     end;
     new
   end
