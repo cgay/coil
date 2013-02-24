@@ -7,6 +7,7 @@ License:   See LICENSE.txt in this distribution for details.
 /// Synopsis: The core Coil data structure.  Maintains an ordered mapping
 ///   of key/value pairs. Back links to the parent struct are maintained
 ///   so that absolute references (i.e., @root...) can be determined.
+///   Keys are strings.
 ///
 define open class <struct> (<mutable-explicit-key-collection>)
   slot struct-entries :: <list> = #();
@@ -170,9 +171,6 @@ define constant $internal-unfound = list("iUNFOUND");
 define method element
     (struct :: <struct>, key :: <string>, #key default = $internal-unfound)
  => (object)
-  local method find-root (s)
-          iff(s.struct-parent, find-root(s.struct-parent), s)
-        end;
   if (member?('.', key))
     iterate loop (struct = struct,
                   path = as(<list>, split(key, '.')),
@@ -181,13 +179,13 @@ define method element
       let value = element(struct, subkey, default: $internal-unfound);
       if (value == $internal-unfound)
         if (default == $internal-unfound)
-          let extra = iff(empty?(seen),
-                          "",
-                          format-to-string(" (because %= doesn't exist)",
-                                           join(path, ".")));
+          let reason = iff(empty?(seen),
+                           "",
+                           format-to-string(" (because %= doesn't exist)",
+                                            join(path, ".")));
           error(make(<invalid-key-error>,
                      format-string: "The key %= does not exist%s.",
-                     format-arguments: list(key, extra)));
+                     format-arguments: list(key, reason)));
         else
           default
         end
@@ -207,9 +205,18 @@ define method element
       end
     end
   elseif (key = "@root")
-    find-root(struct)
+    iterate find-root (st = struct)
+      iff(st.struct-parent, find-root(st.struct-parent), st)
+    end
   else
-    next-method()
+    let entry = find-entry(struct.struct-entries, key);
+    iff(entry,
+        entry.entry-value,
+        iff(default == $internal-unfound,
+            error(make(<invalid-key-error>,
+                       format-string: "The key %= does not exist.",
+                       format-arguments: list(key))),
+            default))
   end
 end method element;
 
