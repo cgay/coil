@@ -192,6 +192,7 @@ define method parse-struct-attributes
                 // TODO(cgay): This should really merge against the current
                 // pathname, not the original pathname passed to the parser.
                 // i.e., nested @file links won't use the correct relative path.
+                // TODO(cgay): catch circular @file references.
                 let file = as(<file-locator>, filename);
                 if (p.source-locator)
                   file := merge-locators(file, p.source-locator);
