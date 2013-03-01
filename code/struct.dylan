@@ -108,7 +108,7 @@ define method element-setter
     entry.entry-value := new-value;
   else
     let entry = make(<entry>, key: key, value: new-value);
-    struct.struct-entries := add!(struct.struct-entries, entry);
+    struct.struct-entries := concatenate(struct.struct-entries, list(entry));
   end;
   new-value
 end method element-setter;
@@ -118,7 +118,6 @@ define method remove-key!
   let content :: <list> = struct.struct-entries;
   let (entry, index) = find-entry(content, key);
   if (entry)
-    // TODO(cgay): Why isn't remove-key! defined for <stretchy-vector> or <list>?
     struct.struct-entries
       := concatenate(copy-sequence(content, end: index),
                      copy-sequence(content, start: index + 1));
@@ -250,7 +249,14 @@ define open generic write-coil
 define method write-coil
     (stream :: <stream>, struct :: <struct>) => ()
   printing-logical-block (stream, prefix: "{", suffix: "}")
-    for (value keyed-by key in struct)
+    for (value keyed-by key in struct,
+         first? = #t then #f)
+      // TODO(cgay): one element per line
+      if (~first?)
+        write(stream, " ");
+      end;
+      write(stream, key);
+      write(stream, ": ");
       write-coil(stream, value);
     end;
   end;
@@ -259,7 +265,11 @@ end;
 define method write-coil
     (stream :: <stream>, seq :: <sequence>) => ()
   printing-logical-block (stream, prefix: "[", suffix: "]")
-    for (value in seq)
+    for (value in seq,
+         first? = #t then #f)
+      if (~first?)
+        write(stream, " ");
+      end;
       write-coil(stream, value);
     end;
   end;
