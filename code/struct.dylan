@@ -243,52 +243,66 @@ end method deep-copy;
 
 //// Outputting coil
 
-define open generic write-coil
-    (stream :: <stream>, coil-data) => ();
-
-define method write-coil
-    (stream :: <stream>, struct :: <struct>) => ()
-  printing-logical-block (stream, prefix: "{", suffix: "}")
-    for (value keyed-by key in struct,
-         first? = #t then #f)
-      // TODO(cgay): one element per line
-      if (~first?)
-        write(stream, " ");
-      end;
-      write(stream, key);
-      write(stream, ": ");
-      write-coil(stream, value);
-    end;
-  end;
+define function write-coil
+    (stream :: <stream>, coil-data) => ()
+  %write-coil(stream, coil-data, #t)
 end;
 
-define method write-coil
-    (stream :: <stream>, seq :: <sequence>) => ()
+define generic %write-coil
+    (stream :: <stream>, coil-data, top? :: <boolean>) => ();
+
+define method %write-coil
+    (stream :: <stream>, struct :: <struct>, top? :: <boolean>) => ()
+  local method write-struct ()
+          for (value keyed-by key in struct,
+               first? = #t then #f)
+            // TODO(cgay): one element per line
+            if (~first?)
+              write(stream, " ");
+            end;
+            write(stream, key);
+            write(stream, ": ");
+            %write-coil(stream, value, #f);
+          end;
+        end;
+  if (top?)
+    // At top level (i.e., file level) there is an implicit struct, so no
+    // braces are used.
+    write-struct()
+  else
+    printing-logical-block (stream, prefix: "{", suffix: "}")
+      write-struct();
+    end;
+  end;
+end method %write-coil;
+
+define method %write-coil
+    (stream :: <stream>, seq :: <sequence>, top? :: <boolean>) => ()
   printing-logical-block (stream, prefix: "[", suffix: "]")
     for (value in seq,
          first? = #t then #f)
       if (~first?)
         write(stream, " ");
       end;
-      write-coil(stream, value);
+      %write-coil(stream, value, #f);
     end;
   end;
-end;
+end method %write-coil;
 
-define method write-coil
-    (stream :: <stream>, int :: <integer>) => ()
+define method %write-coil
+    (stream :: <stream>, int :: <integer>, top? :: <boolean>) => ()
   write(stream, integer-to-string(int));
 end;
 
-define method write-coil
-    (stream :: <stream>, float :: <float>) => ()
+define method %write-coil
+    (stream :: <stream>, float :: <float>, top? :: <boolean>) => ()
   write(stream, float-to-string(float));
 end;
 
 define constant $newline-regex :: <regex> = compile-regex("\r|\r\n|\n");
 
-define method write-coil
-    (stream :: <stream>, string :: <string>) => ()
+define method %write-coil
+    (stream :: <stream>, string :: <string>, top? :: <boolean>) => ()
   if (member?('\n', string))
     printing-logical-block(stream, prefix: "\"\"\"", suffix: "\"\"\"")
       for (line in split(string, $newline-regex))
@@ -296,7 +310,8 @@ define method write-coil
       end;
     end;
   else
-    format(stream, "%=", string);
+    // TODO(cgay): escaping
+    format(stream, "\"%s\"", string);
   end;
-end;
+end method %write-coil;
 
