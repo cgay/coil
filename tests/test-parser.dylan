@@ -178,7 +178,7 @@ define test test-reparse ()
 end test test-reparse;
 
 define test test-follow-links ()
-  let p = make(<coil-parser>, source: "", text: "");
+  let parser = make(<coil-parser>, source: "", text: "");
   let root = make(<struct>, name: "@root");
   let child = make(<struct>, name: "child");
   let grandchild = make(<struct>, name: "grandchild");
@@ -198,7 +198,7 @@ define test test-follow-links ()
                     list("@root.child", root, child),
                     list("@root.child.grandchild", root, grandchild)))
     let (link-name, anchor, expected) = apply(values, item);
-    let actual = follow-links(p, make(<link>, name: link-name), anchor);
+    let actual = follow-links(parser, make(<link>, name: link-name), anchor);
     check-equal(fmt("%= resolves correctly", link-name),
                 expected,
                 actual);
@@ -274,6 +274,7 @@ E: {
 
 define test test-extends-basic ()
   let tree = get-test-struct();
+  write-coil(*standard-output*, tree);
   check-equal("aaa", tree["A.a"], "a");
   check-equal("bbb", tree["A.b"], "b");
   check-equal("ccc", tree["A.c"], "c");
