@@ -13,9 +13,17 @@ define open class <struct> (<mutable-explicit-key-collection>)
   slot struct-entries :: <list> = #();
   slot struct-parent :: false-or(<struct>) = #f,
     init-keyword: parent:;
-  constant slot struct-name :: <string>,
-    required-init-keyword: name:;
+  // This is for debugging only.  For the top-level struct in a file
+  // you might want to set it to the filename.  Otherwise it's the
+  // key under which the struct was created.
+  constant slot %struct-name :: false-or(<string>) = #f,
+    init-keyword: name:;
 end class <struct>;
+
+define method struct-name
+    (struct :: <struct>) => (name :: <string>)
+  struct.%struct-name | "???"
+end;
 
 define method print-object
     (struct :: <struct>, stream :: <stream>)
@@ -243,41 +251,34 @@ end method deep-copy;
 
 //// Outputting coil
 
-define function write-coil
-    (stream :: <stream>, coil-data) => ()
-  %write-coil(stream, coil-data, #t)
-end;
+define open generic write-coil
+    (stream :: <stream>, coil-data, #key indent) => ();
 
-define generic %write-coil
-    (stream :: <stream>, coil-data, top? :: <boolean>) => ();
-
-define method %write-coil
-    (stream :: <stream>, struct :: <struct>, top? :: <boolean>) => ()
-  local method write-struct ()
-          for (value keyed-by key in struct,
-               first? = #t then #f)
-            // TODO(cgay): one element per line
-            if (~first?)
-              write(stream, " ");
-            end;
-            write(stream, key);
-            write(stream, ": ");
-            %write-coil(stream, value, #f);
-          end;
-        end;
-  if (top?)
-    // At top level (i.e., file level) there is an implicit struct, so no
-    // braces are used.
-    write-struct()
-  else
-    printing-logical-block (stream, prefix: "{", suffix: "}")
-      write-struct();
+define method write-coil
+    (stream :: <stream>, struct :: <struct>, #key indent = "")
+ => ()
+  let root? = (indent = "");
+  let prefix = if (root?) "" else "{ " end;
+  let suffix = if (root?) "" else "}" end;
+  write(stream, indent);
+  printing-logical-block (stream, prefix: prefix, suffix: suffix)
+    for (value keyed-by key in struct,
+         first? = #t then #f)
+      if (~first?)
+        write(stream, indent);
+      end;
+      write(stream, key);
+      write(stream, ": ");
+      write-coil(stream, value, indent: concatenate("  ", indent));
+      write(stream, "\n");
     end;
+    write(stream, indent);
   end;
 end method %write-coil;
 
-define method %write-coil
-    (stream :: <stream>, seq :: <sequence>, top? :: <boolean>) => ()
+define method write-coil
+    (stream :: <stream>, seq :: <sequence>, #key indent = "")
+ => ()
   printing-logical-block (stream, prefix: "[", suffix: "]")
     for (value in seq,
          first? = #t then #f)
@@ -289,29 +290,31 @@ define method %write-coil
   end;
 end method %write-coil;
 
-define method %write-coil
-    (stream :: <stream>, int :: <integer>, top? :: <boolean>) => ()
+define method write-coil
+    (stream :: <stream>, int :: <integer>, #key indent = "")
+ => ()
   write(stream, integer-to-string(int));
 end;
 
-define method %write-coil
-    (stream :: <stream>, float :: <float>, top? :: <boolean>) => ()
+define method write-coil
+    (stream :: <stream>, float :: <float>, #key indent = "")
+ => ()
   write(stream, float-to-string(float));
 end;
 
-define constant $newline-regex :: <regex> = compile-regex("\r|\r\n|\n");
-
-define method %write-coil
-    (stream :: <stream>, string :: <string>, top? :: <boolean>) => ()
-  if (member?('\n', string))
-    printing-logical-block(stream, prefix: "\"\"\"", suffix: "\"\"\"")
-      for (line in split(string, $newline-regex))
-        write(stream, line);
-      end;
-    end;
-  else
-    // TODO(cgay): escaping
-    format(stream, "\"%s\"", string);
+define method write-coil
+    (stream :: <stream>, string :: <string>, #key indent = "")
+ => ()
+  let prefix = if (member?('\n', string)
+                     | member?('\r', string)
+                     | (member?('"', string) & member?('\'', string)))
+                 "\"\"\""
+               elseif (member?('"', string))
+                 "'"
+               else
+                 "\""
+               end;
+  printing-logical-block(stream, prefix: prefix, suffix: prefix)
+    write(stream, string);
   end;
-end method %write-coil;
-
+end method write-coil;

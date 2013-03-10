@@ -5,6 +5,7 @@ License:   See LICENSE.txt in this distribution for details.
 
 define suite struct-test-suite ()
   test test-forward-iteration-protocol;
+  test test-write-coil;
 end;
 
 define test test-forward-iteration-protocol ()
@@ -25,3 +26,21 @@ define test test-forward-iteration-protocol ()
 
   //check-equal("map", map(identity, struct), #[100, 2, 3]);
 end test test-forward-iteration-protocol;
+
+
+define test test-write-coil ()
+  local method to-string(x)
+          with-output-to-string (s) write-coil(s, x) end
+        end;
+  check-equal("int", to-string(2), "2");
+  check-equal("simple string", to-string("s"), "\"s\"");
+  check-equal("string with newline", to-string("s\nt"), "\"\"\"s\nt\"\"\"");
+  check-equal("list", to-string(#(1, 2)), "[1 2]");
+  check-equal("vector", to-string(#[3, 4]), "[3 4]");
+
+  let struct = make(<struct>);
+  struct["c"] := 3;
+  struct["b"] := 2;
+  struct["a"] := 1;
+  check-equal("struct1", to-string(struct), "c: 3\nb: 2\na: 1\n");
+end test-write-coil;

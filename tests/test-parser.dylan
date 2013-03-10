@@ -8,7 +8,6 @@ define suite parser-test-suite ()
   suite basics-test-suite;
   suite extends-test-suite;
   suite file-test-suite;
-  suite map-test-suite;
 end suite parser-test-suite;
 
 // TODO:
@@ -148,7 +147,7 @@ define test test-parse-error ()
         "a: { b: { @extends: ...a } }", // extend parents
         "a: [1 2 3]]"
         ))
-    check-condition(fmt("%= gets parse error", coil),
+    check-condition(format-to-string("%= gets parse error", coil),
                     <coil-parse-error>,
                     parse-coil(coil));
   end;
@@ -199,7 +198,7 @@ define test test-follow-links ()
                     list("@root.child.grandchild", root, grandchild)))
     let (link-name, anchor, expected) = apply(values, item);
     let actual = follow-links(parser, make(<link>, name: link-name), anchor);
-    check-equal(fmt("%= resolves correctly", link-name),
+    check-equal(format-to-string("%= resolves correctly", link-name),
                 expected,
                 actual);
   end;
@@ -399,6 +398,8 @@ end;
 
 //// @map
 
+/* map is not supported.
+
 define suite map-test-suite ()
   test test-map;
   test test-map-extends;
@@ -471,3 +472,4 @@ define test test-map-extends ()
   check-equal("ggg", tree["map2.a3.j"], 9);
 end;
 
+*/
