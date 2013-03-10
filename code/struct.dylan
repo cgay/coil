@@ -274,7 +274,7 @@ define method write-coil
     end;
     write(stream, indent);
   end;
-end method %write-coil;
+end method write-coil;
 
 define method write-coil
     (stream :: <stream>, seq :: <sequence>, #key indent = "")
@@ -285,10 +285,10 @@ define method write-coil
       if (~first?)
         write(stream, " ");
       end;
-      %write-coil(stream, value, #f);
+      write-coil(stream, value, indent: concatenate("  ", indent));
     end;
   end;
-end method %write-coil;
+end method write-coil;
 
 define method write-coil
     (stream :: <stream>, int :: <integer>, #key indent = "")
