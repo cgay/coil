@@ -34,6 +34,7 @@ define suite basics-test-suite ()
   test test-comments;
   test test-parse-error;
   //test test-order;       // Deprecated =a not supported.
+  test test-string;
   test test-list;
   test test-nested-list;
   test test-reparse;
@@ -157,6 +158,20 @@ end test test-parse-error;
 //define test test-order ()
 //end;
 
+define test test-string ()
+  for (item in #(#("'x'", "x"),
+                 #("\"x\"", "x"),
+                 #("'''x'''", "x"),
+                 #("\"\"\"x\"\"\"", "x")))
+    let (input, expected) = apply(values, item);
+    let struct-rep = format-to-string("k: %s", input);
+    let struct-exp = make(<struct>);
+    struct-exp["k"] := expected;
+    check-equal(format-to-string("%s => %=", input, expected),
+                parse-coil(struct-rep), struct-exp);
+  end;
+end test test-string;
+
 define test test-list ()
   let struct = parse-coil("x: ['a' 1 2.0 True False None]");
   check-equal("list contents", struct["x"], vector("a", 1, 2.0d0, #t, #f, $none));
@@ -168,7 +183,7 @@ define test test-nested-list ()
 end;
 
 define test test-reparse ()
-  let text = "a: 'this\nis\r\na\tstring\n\r\n\t'";
+  let text = "a: '''this\nis\r\na\tstring\n\r\n\t'''";
   let coil = parse-coil(text);
   let new = parse-coil(with-output-to-string(s)
                          write-coil(s, coil)

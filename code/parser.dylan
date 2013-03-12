@@ -525,8 +525,7 @@ end method parse-link;
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///
 define method parse-list
-    (p :: <coil-parser>)
- => (list :: <vector>)
+    (p :: <coil-parser>) => (list :: <vector>)
   let list = make(<stretchy-vector>);
   if (p.lookahead ~= '[')
     parse-error(p, "List expected");
@@ -546,8 +545,7 @@ end method parse-list;
 /// Synopsis: Parse an integer or float (digits on both sides of the '.' required)
 ///
 define method parse-number
-    (p :: <coil-parser>)
- => (number :: <number>)
+    (p :: <coil-parser>) => (number :: <number>)
   let chars = make(<stretchy-vector>);
   if (p.lookahead = '-')
     add!(chars, p.consume);
@@ -617,9 +615,10 @@ define table $escapes = {
     
 
 /// Synopsis: Parse a one line string terminated by 'start-char'
+///           The start token (' or ") has already been consumed.
 ///
 define method parse-simple-string
-    (p :: <coil-parser>, start-char :: <character>)
+    (p :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
     let char = p.lookahead;
@@ -645,10 +644,11 @@ define method parse-simple-string
   end
 end method parse-simple-string;
       
-/// Synopsis: Parse a multi-line string terminated by 'start-char'
+/// Synopsis: Parse a multi-line string terminated by start-char.
+///           The start token (''' or """) has already been consumed.
 ///
 define method parse-multi-line-string
-    (p :: <coil-parser>, start-char :: <character>)
+    (p :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
     let char = p.consume;
@@ -660,7 +660,7 @@ define method parse-multi-line-string
     elseif (char = start-char)
       let ch2 = lookahead(p);
       let ch3 = lookahead(p, offset: 1);
-      if (char = ch2 = ch3)
+      if (char = ch2 & char = ch3)
         p.consume;
         p.consume;
         map-as(<string>, identity, chars)  // done
