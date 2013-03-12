@@ -376,8 +376,6 @@ define test test-file-1 ()
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);
   check-equal("ddd", root["y.a2"], 2);
-  check-equal("eee", root["y.x2"], 1);
-  check-equal("fff", root["y.x3"], "1");
 end;
 
 define test test-file-2 ()
@@ -386,18 +384,9 @@ define test test-file-2 ()
   check-equal("bbb", root["sub.y.a"], "bar");
   check-equal("ccc", root["sub.y.x"], "foo");
   check-equal("ddd", root["sub.y.a2"], "bar");
-  check-equal("eee", root["sub.y.x2"], "foo");
-  check-equal("fff", root["sub.y.x3"], "foo");
   check-equal("ggg", root["sub2.y.a"], 2);
   check-equal("hhh", root["sub2.y.x"], 1);
   check-equal("iii", root["sub2.y.a2"], 2);
-  check-equal("jjj", root["sub2.y.x2"], 1);
-  check-equal("kkk", root["sub2.y.x3"], "1");
-  check-equal("lll", root["sub3.y.a"], "bar");
-  check-equal("mmm", root["sub3.y.x"], "zoink");
-  check-equal("nnn", root["sub3.y.a2"], "bar");
-  check-equal("ooo", root["sub3.y.x2"], "zoink");
-  check-equal("ppp", root["sub3.y.x3"], "zoink");
 end;
 
 define test test-file-3 ()

@@ -1,4 +1,4 @@
-# sample file used tests
+# sample file used by tests
 x: 1
 y: {a: 2
     x: ..x
