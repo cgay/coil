@@ -260,19 +260,20 @@ define method write-coil
   let root? = (indent = "");
   let prefix = if (root?) "" else "{ " end;
   let suffix = if (root?) "" else "}" end;
-  write(stream, indent);
   printing-logical-block (stream, prefix: prefix, suffix: suffix)
     for (value keyed-by key in struct,
          first? = #t then #f)
-      if (~first?)
-        write(stream, indent);
+      if (~(root? & first?))
+        // Don't put a blank line at the beginning of a "file".
+        write(stream, "\n");
       end;
+      write(stream, indent);
       write(stream, key);
       write(stream, ": ");
       write-coil(stream, value, indent: concatenate("  ", indent));
-      write(stream, "\n");
     end;
-    write(stream, indent);
+    write(stream, "\n");
+    write(stream, indent, end: max(0, indent.size - 2));
   end;
 end method write-coil;
 

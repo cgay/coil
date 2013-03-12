@@ -273,7 +273,6 @@ E: {
 
 define test test-extends-basic ()
   let tree = get-test-struct();
-  write-coil(*standard-output*, tree);
   check-equal("aaa", tree["A.a"], "a");
   check-equal("bbb", tree["A.b"], "b");
   check-equal("ccc", tree["A.c"], "c");
