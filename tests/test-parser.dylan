@@ -370,8 +370,6 @@ define constant $file-content
                 "         ~zzz}\n"
                 "x: 'bar'\n"));
 
-define constant $string = "	";
-
 define function write-test-coil-files
     () => ()
   for (item in $file-content)
@@ -390,7 +388,7 @@ define method make-test-locator
 end;
 
 
-define suite file-suite ()
+define suite file-suite (setup-function: write-test-coil-files)
   test test-file-load;
   test test-file-inclusion;
   test test-file-inclusion-at-root;
@@ -398,7 +396,7 @@ define suite file-suite ()
 end;
 
 define test test-file-load ()
-  let root = parse-coil(make-test-locator("tests/example.coil"));
+  let root = parse-coil(make-test-locator("example.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
   check-equal("ccc", root["y.x"], 1);
@@ -406,7 +404,7 @@ define test test-file-load ()
 end;
 
 define test test-file-inclusion ()
-  let root = parse-coil(make-test-locator("tests/example2.coil"));
+  let root = parse-coil(make-test-locator("example2.coil"));
   check-equal("aaa", root["sub.x"], "foo");
   check-equal("bbb", root["sub.y.a"], "bar");
   check-equal("ccc", root["sub.y.x"], "foo");
@@ -417,7 +415,7 @@ define test test-file-inclusion ()
 end;
 
 define test test-file-inclusion-at-root ()
-  let root = parse-coil(make-test-locator("tests/example3.coil"));
+  let root = parse-coil(make-test-locator("example3.coil"));
   check-equal("x = 1", root["x"], 1);
   check-equal("y.a = 2", root["y.a"], 2);
   check-equal("y.x = 1", root["y.x"], 1);
@@ -426,7 +424,7 @@ define test test-file-inclusion-at-root ()
 end;
 
 define test test-import-file-sub-struct ()
-  let root = parse-coil(make-test-locator("tests/filesubimport.coil"));
+  let root = parse-coil(make-test-locator("filesubimport.coil"));
   check-equal("a", root["imp.sub.two.value"], "hello");
   check-equal("b", root["sub.x"], "foo");
   check-equal("c", root["subsub.parentx"], "default");
