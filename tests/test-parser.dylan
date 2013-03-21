@@ -5,9 +5,9 @@ Copyright: Copyright (c) 2013 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 define suite parser-test-suite ()
-  suite basics-test-suite;
-  suite extends-test-suite;
-  suite file-test-suite;
+  suite basic-suite;
+  suite extends-suite;
+  suite file-suite;
 end suite parser-test-suite;
 
 // TODO:
@@ -15,86 +15,78 @@ end suite parser-test-suite;
 // 
 
 
-//// Basics
+//// basic-suite
 
-define suite basics-test-suite ()
+define suite basic-suite ()
   test test-empty;
   test test-single;
   test test-many;
-  test test-struct;
-  test test-extends-1;
+  test test-extends-basic;
   test test-references;
   test test-delete;
-  test test-file;
-  test test-file-sub;
-  test test-file-delete;
-  test test-file-expansion;
-  //test test-package;     // @package is Python-specific
   test test-whitespace;
   test test-comments;
   test test-parse-error;
-  //test test-order;       // Deprecated =a not supported.
   test test-string;
   test test-list;
   test test-nested-list;
   test test-reparse;
   test test-follow-links;
-end suite basics-test-suite;
+  test parse-coil-returns-struct?;
+  test compound-key-creates-sub-structs?;
+end suite basic-suite;
 
 define test test-empty ()
   let struct = parse-coil("");
-  check-equal("empty string yields empty struct?", struct.size, 0);
+  check-true("a", instance?(struct, <struct>));
+  check-equal("empty input yields empty struct", struct.size, 0);
 end;
 
 define test test-single ()
   let struct = parse-coil("this: 'that'");
-  check-equal("one attribute yields struct of size 1?", struct.size, 1);
+  check-equal("size = 1", struct.size, 1);
   check-equal("this = 'that'", struct["this"], "that");
 end;
 
 define test test-many ()
-  let struct = parse-coil("this: 'that' int: 1 float: 2.0");
-  check-equal("length = 3", struct.size, 3);
+  let struct = parse-coil("this: 'that' int: 37 float: 2.4");
+  check-equal("size = 3", struct.size, 3);
 
   check-instance?("this is a string", <string>, struct["this"]);
   check-equal("this = 'that'", struct["this"], "that");
 
   check-instance?("int is an integer", <integer>, struct["int"]);
-  check-equal("int = 1", struct["int"], 1);
+  check-equal("int = 37", struct["int"], 37);
 
   check-instance?("float is a float", <float>, struct["float"]);
-  check-equal("float = 2.0", struct["float"], 2.0);
+  check-equal("float = 2.4", struct["float"], 2.4);
 end;
 
-define test test-struct ()
-  let struct = parse-coil("foo: { bar: 'baz' } -moo: 'cow'");
-  check-equal("[foo][bar] = baz", struct["foo"]["bar"], "baz");
-  check-equal("foo.bar = baz", struct["foo.bar"], "baz");
-  check-equal("@root.foo.bar = baz", struct["@root.foo.bar"], "baz");
-  check-equal("-moo = cow", struct["-moo"], "cow");
+define test test-extends-basic ()
+  let struct = parse-coil("a: {x: 7} b: { @extends: ..a }");
+  check-equal("basic @extend test", struct["b.x"], 7);
 end;
 
-define test test-extends-1 ()
-  let struct = parse-coil("a: {x: 'x'} b: { @extends: ..a }");
-  check-equal("basic @extend test", struct["b.x"], "x");
-end;
-
+// Can refer to other values by path references?
 define test test-references ()
+  let st = parse-coil("a: { m: 5 n: { x: ...b } } "
+                        "b: 6 "
+                        "c: @root.a.n.x "
+                        "d: a.m");
+  check-equal("1", st["a.m.n.x"], 6);
+  check-equal("2", st["b"], 6);
+  check-equal("3", st["c"], 6);
+  check-equal("4", st["d"], 5);
 end;
 
 define test test-delete ()
-end;
-
-define test test-file ()
-end;
-
-define test test-file-sub ()
-end;
-
-define test test-file-delete ()
-end;
-
-define test test-file-expansion ()
+  let st = parse-coil("a: { m: { x: 1 y: 2 } } "
+                        "b: { @extends: ..a.m ~y z: 3 }");
+  check-equal("size", st["b"].size, 2);
+  check-equal("has x", st["b.x"], 1);
+  check-equal("has z", st["b.z"], 3);
+  let unique = list(9);
+  check-equal("y deleted", element(st, "b.y", default: unique), unique);
 end;
 
 define test test-whitespace ()
@@ -222,14 +214,13 @@ end test test-follow-links;
 
 //// @extends
 
-define suite extends-test-suite ()
-  test test-extends-basic;
-  test test-extends-and-delete;
+define suite extends-suite ()
+  test test-extend-and-delete;
   test test-extends-references;
   test test-extends-2;
   test test-relative-paths;
   test test-extend-copies;
-end suite extends-test-suite;
+end suite extends-suite;
 
 define method get-test-struct ()
   parse-coil("A: {\n"
@@ -262,39 +253,7 @@ define method get-test-struct ()
              )
 end method get-test-struct;
 
-/*
-
-A: {
-    B: {
-        C: "arf"
-    }
-    D: "abc"
-}
-
-E: {
-    @extends: @root.A
-    B.C: "other"
-}
-# => E: { B: { C: "other" } D: "abc" }
-
-E: {
-    B.C: "other"
-    @extends: @root.A
-}
-# => E: { B: { C: "arf" } D: "abc" }
-# i.e., E.B is completely replaced by (a copy of) A.B
-
-*/
-
-define test test-extends-basic ()
-  let tree = get-test-struct();
-  check-equal("aaa", tree["A.a"], "a");
-  check-equal("bbb", tree["A.b"], "b");
-  check-equal("ccc", tree["A.c"], "c");
-  check-equal("size", tree["A"].size, 3);
-end;
-
-define test test-extends-and-delete ()
+define test test-extend-and-delete ()
   let tree = get-test-struct();
   check-equal("aaa", tree["B.a"], "a");
   check-equal("bbb", tree["B.b"], "b");
@@ -350,27 +309,95 @@ define test test-extend-copies ()
   check-equal("two-c", root["c.aa.aab"], 5);
 end;
 
-//// 
+define test parse-coil-returns-struct? ()
+  let st = parse-coil("a: 5");
+  check-true("a", instance?(st, <struct>));
+  check-equal("b", st.size, 1);
+  check-equal("c", st["a"], 5);
+  check-condition("top-level must be struct", <coil-parse-error>, parse-coil("123"));
+end;
+
+define test compound-key-creates-sub-structs? ()  
+  let st = parse-coil("a.b: 3");
+  check-equal("a", st.size, 1);
+  check-equal("b", st["a"]["b"], 3);
+end;
+
+
 
 
 //// @file
 
+// Because we have no way to associate data files with tests yet...
+
+define constant $file-content
+  = list(list("example.coil",
+              "# sample file used by tests\n"
+                "x: 1\n"
+                "y: { a: 2  x: ..x  a2: @root.y.a }\n"),
+         list("example2.coil",
+              "# another file used in tests\n"
+                "sub: {@file: \"example.coil\"\n"
+                "      x: \"foo\"\n"
+                "      y.a: \"bar\"\n"
+                "     }\n"
+                "sub2: {@file: \"example.coil\"}\n"),
+         list("example3.coil",
+              "@file: \"example.coil\"\n"
+                "y.b: 3\n"),
+         list("complex.coil",
+              "sub: {\n"
+                "    y: 2\n"
+                "    x: \"default\"\n"
+                "    two: {\n"
+                "        parentx: ..x\n"
+                "        value: \"hello\"\n"
+                "        zzz: 8\n"
+                "    }\n"
+                "}\n"),
+         list("filesubimport.coil",
+              "# import file\n"
+                "imp: {@file: \"complex.coil\"}\n"
+                "\n"
+                "# import sub-struct from file\n"
+                "sub: {@file: [\"complex.coil\" \"sub\"]\n"
+                "      x: \"foo\"\n"
+                "     }\n"
+                "\n"
+                "# import sub-sub-struct from file\n"
+                "subsub: {@file: ['complex.coil' 'sub.two']\n"
+                "         value: 'override'\n"
+                "         ~zzz}\n"
+                "x: 'bar'\n"));
+
+define constant $string = "	";
+
+define function write-test-coil-files
+    () => ()
+  for (item in $file-content)
+    let (filename, content) = apply(values, item);
+    fs/with-open-file(out = make-test-locator(filename),
+                      direction: #"output",
+                      if-exists: #"overwrite")
+      write(out, content)
+    end;
+  end;
+end function write-test-coil-files;
+
 define method make-test-locator
     (filename :: <string>) => (locator :: <locator>)
-  // TODO: This is temporary (obviously).  Need a way to associate
-  // data files with test projects.
-  merge-locators(as(<file-locator>, filename),
-                 as(<directory-locator>, "/home/cgay/dylan/src/coil/"))
+  merge-locators(as(<file-locator>, filename), fs/temp-directory())
 end;
 
 
-define suite file-test-suite ()
-  test test-file-1;
-  test test-file-2;
-  test test-file-3;
+define suite file-suite ()
+  test test-file-load;
+  test test-file-inclusion;
+  test test-file-inclusion-at-root;
+  test test-import-file-sub-struct;
 end;
 
-define test test-file-1 ()
+define test test-file-load ()
   let root = parse-coil(make-test-locator("tests/example.coil"));
   check-equal("aaa", root["x"], 1);
   check-equal("bbb", root["y.a"], 2);
@@ -378,7 +405,7 @@ define test test-file-1 ()
   check-equal("ddd", root["y.a2"], 2);
 end;
 
-define test test-file-2 ()
+define test test-file-inclusion ()
   let root = parse-coil(make-test-locator("tests/example2.coil"));
   check-equal("aaa", root["sub.x"], "foo");
   check-equal("bbb", root["sub.y.a"], "bar");
@@ -389,90 +416,24 @@ define test test-file-2 ()
   check-equal("iii", root["sub2.y.a2"], 2);
 end;
 
-define test test-file-3 ()
+define test test-file-inclusion-at-root ()
   let root = parse-coil(make-test-locator("tests/example3.coil"));
-  check-equal("aaa", root["x"], 1);
-  check-equal("bbb", root["y.a"], 2);
-  check-equal("ccc", root["y.x"], 1);
-  check-equal("ddd", root["y.a2"], 2);
-  check-equal("eee", root["y.b"], 3);
+  check-equal("x = 1", root["x"], 1);
+  check-equal("y.a = 2", root["y.a"], 2);
+  check-equal("y.x = 1", root["y.x"], 1);
+  check-equal("y.a2 = 2", root["y.a2"], 2);
+  check-equal("y.b = 3", root["y.b"], 3);
 end;
 
+define test test-import-file-sub-struct ()
+  let root = parse-coil(make-test-locator("tests/filesubimport.coil"));
+  check-equal("a", root["imp.sub.two.value"], "hello");
+  check-equal("b", root["sub.x"], "foo");
+  check-equal("c", root["subsub.parentx"], "default");
+  check-equal("d", root["subsub.value"], "override");
 
-//// @map
-
-/* map is not supported.
-
-define suite map-test-suite ()
-  test test-map;
-  test test-map-extends;
-end suite map-test-suite;
-
-define method get-map-struct ()
-  parse-coil("expanded: {\n"
-             "    a1: {\n"
-             "        z: 1\n"
-             "        x: 1\n"
-             "        y: 1\n"
-             "    }\n"
-             "    a2: {\n"
-             "        z: 1\n"
-             "        x: 2\n"
-             "        y: 3\n"
-             "    }\n"
-             "    a3: {\n"
-             "        z: 1\n"
-             "        x: 3\n"
-             "        y: 5\n"
-             "    }\n"
-             "    b1: {\n"
-             "        z: 2\n"
-             "        x: 1\n"
-             "        y: 1\n"
-             "    }\n"
-             "    b2: {\n"
-             "        z: 2\n"
-             "        x: 2\n"
-             "        y: 3\n"
-             "    }\n"
-             "    b3: {\n"
-             "        z: 2\n"
-             "        x: 3\n"
-             "        y: 5\n"
-             "    }\n"
-             "}\n"
-             "map: {\n"
-             "    @map: [1 2 3]\n"
-             "    x: [1 2 3]\n"
-             "    y: [1 3 5]\n"
-             "    a: { z: 1 }\n"
-             "    b: { z: 2 }\n"
-             "}\n"
-             "map1: {\n"
-             "    @extends: ..map\n"
-             "}\n"
-             "map2: {\n"
-             "    @extends: ..map\n"
-             "    a: { z: 3 }\n"
-             "    j: [7 8 9]\n"
-             "}\n"
-               )
-end method get-map-struct;
-
-define test test-map ()
-  let tree = get-map-struct();
-  check-equal("map = expanded", tree["map"], tree["expanded"]);
+  let unique = list(9);
+  check-equal("delete element inherited from file",
+              element(root, "subsub.zzz", default: unique),
+              unique);
 end;
-
-define test test-map-extends ()
-  let tree = get-map-struct();
-  check-equal("aaa", tree["map1"], tree["expanded"]);
-  check-equal("bbb", tree["map2.a1.z"], 3);
-  check-equal("ccc", tree["map2.a1.j"], 7);
-  check-equal("ddd", tree["map2.a2.z"], 3);
-  check-equal("eee", tree["map2.a2.j"], 8);
-  check-equal("fff", tree["map2.a3.z"], 3);
-  check-equal("ggg", tree["map2.a3.j"], 9);
-end;
-
-*/

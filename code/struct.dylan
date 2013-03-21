@@ -251,6 +251,16 @@ end method deep-copy;
 
 //// Outputting coil
 
+// TODO: Could consider eliding some nesting levels, as an option.
+// For example, if a struct contains a single key/value pair which is
+// itself a struct...
+//   a: {
+//     b: 6
+//   }
+// they can be rewritten as a compound key:
+//   a.b: 6
+
+
 define open generic write-coil
     (stream :: <stream>, coil-data, #key indent) => ();
 

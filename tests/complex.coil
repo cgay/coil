@@ -4,5 +4,6 @@ sub: {
     two: {
         parentx: ..x
         value: "hello"
+	zzz: 8
     }
 }

@@ -4,8 +4,19 @@ Copyright: Copyright (c) 2013 Carl L Gay.  All rights reserved.
 License:   See LICENSE.txt in this distribution for details.
 
 define suite struct-test-suite ()
+  test test-lookup-dotted-path;
   test test-forward-iteration-protocol;
   test test-write-coil;
+end;
+
+define test test-lookup-dotted-path ()
+  let root = make(<struct>);
+  let a = make(<struct>);
+  let b = make(<struct>);
+  root["a"] := a;
+  a["b"] := b;
+  b["c"] := 9;
+  check-equal("can lookup dotted path", root["a.b.c"], 9);
 end;
 
 define test test-forward-iteration-protocol ()
