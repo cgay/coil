@@ -21,25 +21,6 @@ define open class <struct> (<mutable-explicit-key-collection>)
     init-keyword: name:;
 end class <struct>;
 
-define method initialize
-    (struct :: <struct>, #key copy-from :: false-or(<struct>))
-  if (copy-from)
-    // Recursively copy the given struct.  This is primarily intended
-    // for replacing the <struct-prototype> parse tree with actual
-    // structs.  It iterates over the keys rather than using "for (v
-    // keyed-by k in prototype)" so as to explicitly call the
-    // "element" method.
-    let dict = copy-from.struct-values;
-    for (key in copy-from.struct-order)
-      let value = copy-from[key];
-      dict[key] := select (value by instance?)
-                     <struct> => make(<struct>, copy-from: value);
-                     otherwise => value;
-                   end;
-    end;
-  end;
-end method initialize;
-
 define method struct-name
     (struct :: <struct>) => (name :: <string>)
   struct.%struct-name | "???"
@@ -83,7 +64,7 @@ define method forward-iteration-protocol
          // current-element-setter
          method (value :: <object>, struct :: <struct>, state :: <integer>)
              => (value :: <object>)
-           struct.struct-values[state] := value
+           error("current-element-setter not defined");
          end,
          // copy-state
          method (t :: <struct>, state :: <integer>) => (state :: <integer>)
@@ -106,7 +87,10 @@ define method element-setter
     (new-value :: <object>, struct :: <struct>, key-or-path :: <string>)
  => (new-value :: <object>)
   local method node-handler (node, simple-key, path)
-          if (path == key-or-path)
+          format-out("element-setter.node-handler: simple-key = %=, path = %=\n",
+                     simple-key, path);
+          if (path = key-or-path)
+            format-out("  setting key %=\n", simple-key);
             add-new!(node.struct-order, simple-key, test: \=);
             node.struct-values[simple-key] := new-value;
             if (instance?(new-value, <struct>) & ~new-value.struct-parent)
@@ -122,7 +106,7 @@ define method remove-key!
     (struct :: <struct>, key-or-path :: <string>) => (present? :: <boolean>)
   let present? = #f;
   local method node-handler (node, simple-key, path)
-          if (path == key-or-path)
+          if (path = key-or-path)
             remove!(node.struct-order, simple-key, test: \=);
             present? := remove-key!(node.struct-values, simple-key);
           end;
@@ -178,7 +162,7 @@ define method element
  => (object)
   let result = default;
   local method node-handler (node, simple-key, path)
-          if (path == key)
+          if (path = key)
             add-new!(node.struct-order, simple-key);
             let val = %element(node, simple-key, default);
             if (val == $internal-unfound)
@@ -229,107 +213,32 @@ define method do-path
      #key require-struct? :: <boolean>)
  => ()
   iterate loop (parent = struct, elements = as(<list>, split(path, '.')), seen = #())
-    let simple-key = elements.head;
-    let new-seen = pair(simple-key, seen);
-    let value = if (simple-key = "@root")
-                  element(parent, simple-key, default: $internal-unfound)
-                else
-                  iterate find-root (st = parent)
-                    iff(st.struct-parent, find-root(st.struct-parent), st)
-                  end
-                end;
-    if (value == $internal-unfound)
-      raise(<key-error>,
-            "Invalid struct path %s: %s does not exist.",
-            path, join(reverse(new-seen), "."));
-    elseif ((require-struct? | (elements.size > 1)) & ~instance?(value, <struct>))
-      raise(<key-error>,
-            "Invalid struct path %s: %s does not name a struct.",
-            path, join(reverse(new-seen), "."));
+    format-out("elements = %s, seen = %s\n", elements, seen);
+    if (~empty?(elements))
+      let simple-key = elements.head;
+      let new-seen = pair(simple-key, seen);
+      let value = if (simple-key = "@root")
+                    format-out("  finding root...\n");
+                    iterate find-root (st = parent)
+                      iff(st.struct-parent, find-root(st.struct-parent), st)
+                    end
+                  else
+                    format-out("  calling element on %=\n", simple-key);
+                    // Don't call element(parent, ...) here because it would cause
+                    // infinite recursion.
+                    element(parent.struct-values, simple-key, default: $internal-unfound)
+                  end;
+      if (value == $internal-unfound)
+        raise(<key-error>,
+              "Invalid struct path %s: %s does not exist.",
+              path, join(reverse(new-seen), "."));
+      elseif ((require-struct? | (elements.size > 1)) & ~instance?(value, <struct>))
+        raise(<key-error>,
+              "Invalid struct path %s: %s does not name a struct.",
+              path, join(reverse(new-seen), "."));
+      end;
+      node-handler(value, simple-key, join(reverse(new-seen), "."));
+      loop(value, elements.tail, new-seen);
     end;
-    node-handler(value, simple-key, join(reverse(new-seen), "."));
-    loop(value, elements.tail, new-seen);
   end;
 end method do-path;
-
-
-//// Outputting coil
-
-// TODO: Could consider eliding some nesting levels, as an option.
-// For example, if a struct contains a single key/value pair which is
-// itself a struct...
-//   a: {
-//     b: 6
-//   }
-// they can be rewritten as a compound key:
-//   a.b: 6
-
-
-define open generic write-coil
-    (stream :: <stream>, coil-data, #key indent) => ();
-
-define method write-coil
-    (stream :: <stream>, struct :: <struct>, #key indent = "")
- => ()
-  let root? = (indent = "");
-  let prefix = if (root?) "" else "{ " end;
-  let suffix = if (root?) "" else "}" end;
-  printing-logical-block (stream, prefix: prefix, suffix: suffix)
-    for (value keyed-by key in struct,
-         first? = #t then #f)
-      if (~(root? & first?))
-        // Don't put a blank line at the beginning of a "file".
-        write(stream, "\n");
-      end;
-      write(stream, indent);
-      write(stream, key);
-      write(stream, ": ");
-      write-coil(stream, value, indent: concatenate("  ", indent));
-    end;
-    write(stream, "\n");
-    write(stream, indent, end: max(0, indent.size - 2));
-  end;
-end method write-coil;
-
-define method write-coil
-    (stream :: <stream>, seq :: <sequence>, #key indent = "")
- => ()
-  printing-logical-block (stream, prefix: "[", suffix: "]")
-    for (value in seq,
-         first? = #t then #f)
-      if (~first?)
-        write(stream, " ");
-      end;
-      write-coil(stream, value, indent: concatenate("  ", indent));
-    end;
-  end;
-end method write-coil;
-
-define method write-coil
-    (stream :: <stream>, int :: <integer>, #key indent = "")
- => ()
-  write(stream, integer-to-string(int));
-end;
-
-define method write-coil
-    (stream :: <stream>, float :: <float>, #key indent = "")
- => ()
-  write(stream, float-to-string(float));
-end;
-
-define method write-coil
-    (stream :: <stream>, string :: <string>, #key indent = "")
- => ()
-  let prefix = if (member?('\n', string)
-                     | member?('\r', string)
-                     | (member?('"', string) & member?('\'', string)))
-                 "\"\"\""
-               elseif (member?('"', string))
-                 "'"
-               else
-                 "\""
-               end;
-  printing-logical-block(stream, prefix: prefix, suffix: prefix)
-    write(stream, string);
-  end;
-end method write-coil;

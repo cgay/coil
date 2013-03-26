@@ -142,7 +142,9 @@ define method %parse-coil
   parse-struct-attributes(parser, root);
   // Copy the <struct-prototype> into an actual <struct>, resolving
   // all references.
-  make(<struct>, copy-from: root, name: "@root")
+  let struct = make(<struct>, name: "@root");
+  copy-struct-into(root, struct);
+  struct
 end;
 
 define method parse-struct

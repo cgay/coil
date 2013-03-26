@@ -43,6 +43,8 @@ end;
 
 define test test-single ()
   let struct = parse-coil("this: 'that'");
+  write-coil(*standard-output*, struct);
+  force-output(*standard-output*);
   check-equal("size = 1", struct.size, 1);
   check-equal("this = 'that'", struct["this"], "that");
 end;

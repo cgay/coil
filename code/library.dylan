@@ -49,6 +49,7 @@ define module %coil
     exclude: { format-to-string };
   use file-system;
   use format;
+  use format-out;
   use locators;
   use pprint;
   use print;

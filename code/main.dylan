@@ -53,5 +53,26 @@ define method %element
   end
 end method %element;
 
+define method copy-struct-into
+    (source :: <struct-prototype>, target :: <struct>) => ()
+  // Copy secondary items in first, excluding those that are overridden
+  // by items explicitly set for this struct, rather than inherited.
 
-
+  // TODO(cgay): This gets the order wrong if @extends or @file
+  // wasn't the first thing in the struct!  Enforce that?  Also
+  // might want to note in the docs that order isn't defined for
+  // multiple @s in the same struct.
+  for (key in source.secondary-order)
+    if (~member?(key, source.deleted-keys, test: \=)
+          & ~member?(key, source.struct-order, test: \=))
+      target[key] := source.secondary-values[key];
+    end;
+  end;
+  for (key in source.struct-order)
+    let value = source.struct-values[key];
+    target[key] := select (value by instance?)
+                     <struct> => make(<struct>, copy-from: value);
+                     otherwise => value;
+                   end;
+  end;
+end method copy-struct-into;
