@@ -6,11 +6,13 @@ License:   See LICENSE.txt in this distribution for details.
 
 /*
 
-This parser makes two passes.  During the first pass objects that
-don't involve any links outside the struct are parsed, and most
-struct keys are filled in.  The second pass resolves @extends,
-@file, deletions, compound struct keys (i.e., a.b.c: foo) and
-struct value links (i.e., foo: a.b.c).  This is necessary because
+This parser makes two passes.  During the first pass a tree of
+<struct-prototype>s which track inherited and deleted values is built.
+The second pass creates a copy of that tree using real <struct>
+objects. that don't involve any links outside the struct are parsed,
+and most struct keys are filled in.  The second pass resolves
+@extends, @file, deletions, compound struct keys (i.e., a.b.c: foo)
+and struct value links (i.e., foo: a.b.c).  This is necessary because
 @extends and @file may change what a.b.c refers to.
 
 During the first pass, keys begining with '@' are used as placeholders
@@ -45,9 +47,7 @@ define constant $extended-key-regex :: <regex>
                                    $key-regex.regex-pattern));
 
 define constant $path-regex :: <regex>
-  = compile-regex(format-to-string("(@|\\.+)?%s(\\.%s)*",
-                                   $key-regex.regex-pattern,
-                                   $key-regex.regex-pattern));
+  = compile-regex(format-to-string("(@|\\.+)?%s", $extended-key-regex.regex-pattern));
 
 
 /// Synopsis: '$none' is what "None" parses to.
@@ -81,34 +81,34 @@ end;
 ///           'args' as the message.  If the current source location is known
 ///           it is prefixed to the message.
 define method parse-error
-    (p :: <coil-parser>, format-string, #rest args)
-  let context = format-to-string("@%d:%d ", p.line-number, p.column-number);
+    (parser :: <coil-parser>, format-string, #rest args)
+  let context = format-to-string("@%d:%d ", parser.line-number, parser.column-number);
   let message = concatenate(context,
                             apply(format-to-string, format-string, args),
-                            "\n", p.current-line,
-                            "\n", p.indicator-line);
+                            "\n", parser.current-line,
+                            "\n", parser.indicator-line);
   error(make(<coil-parse-error>, format-string: message));
 end;
 
 /// Synopsis: Return the line pointed to by 'current-index'.
 ///
 define method current-line
-    (p :: <coil-parser>) => (line :: <string>)
-  let max = p.input-text.size;
-  let curr = p.current-index;
-  let epos = min(position(p.input-text, '\n', start: curr) | max,
-                 position(p.input-text, '\r', start: curr) | max);
-  slice(p.input-text,
-        p.current-index - p.column-number + 1,
+    (parser :: <coil-parser>) => (line :: <string>)
+  let max = parser.input-text.size;
+  let curr = parser.current-index;
+  let epos = min(position(parser.input-text, '\n', start: curr) | max,
+                 position(parser.input-text, '\r', start: curr) | max);
+  slice(parser.input-text,
+        parser.current-index - parser.column-number + 1,
         epos)
 end;
 
 /// Synopsis: Return a line that indicates which character 'current-index'
 ///           points to.  ".........^"
 define method indicator-line
-    (p :: <coil-parser>) => (line :: <string>)
-  let line = make(<string>, size: p.column-number, fill: '.');
-  line[p.column-number - 1] := '^';
+    (parser :: <coil-parser>) => (line :: <string>)
+  let line = make(<string>, size: parser.column-number, fill: '.');
+  line[parser.column-number - 1] := '^';
   line
 end;
 
@@ -137,101 +137,131 @@ define method parse-coil
 end;
 
 define method %parse-coil
-    (p :: <coil-parser>) => (struct :: <struct>)
-  let root = make(<struct>, name: "@root");
-  resolve-references!(p, parse-struct-attributes(p, root), #());
-  root
+    (parser :: <coil-parser>) => (struct :: <struct>)
+  let root = make(<struct-prototype>);
+  parse-struct-attributes(parser, root);
+  // Copy the <struct-prototype> into an actual <struct>, resolving
+  // all references.
+  make(<struct>, copy-from: root, name: "@root")
 end;
 
 define method parse-struct
-    (p :: <coil-parser>, key :: <string>) => (struct :: <struct>)
-  let struct = make(<struct>, name: key);
-  eat-whitespace-and-comments(p);
-  select (p.lookahead)
+    (parser :: <coil-parser>, name :: <string>) => (struct :: <struct>)
+  let struct = make(<struct-prototype>, name: name);
+  eat-whitespace-and-comments(parser);
+  select (parser.lookahead)
     '{' =>
-      p.consume;
-      parse-struct-attributes(p, struct);
-      expect(p, "}");
+      parser.consume;
+      parse-struct-attributes(parser, struct);
+      expect(parser, "}");
     otherwise =>
-      parse-error(p, "Invalid struct.  Expected '{'.");
+      parse-error(parser, "Invalid struct.  Expected '{'.");
   end;
   struct
 end method parse-struct;
 
 /// Synopsis: Parse the attributes of a struct and add them to the 'struct'
-///           argument passed in.  @extends, @file, and deletions are added
-///           to the struct under special names (which aren't valid as keys)
-///           so that they may be resolved during a second pass.
+///           argument passed in.
 define method parse-struct-attributes
-    (p :: <coil-parser>, struct :: <struct>) => (struct :: <struct>)
-  iterate loop (n = 1)
-    eat-whitespace-and-comments(p);
-    select (p.lookahead)
+    (parser :: <coil-parser>, struct :: <struct-prototype>) => (struct :: <struct-prototype>)
+  iterate loop ()
+    eat-whitespace-and-comments(parser);
+    select (parser.lookahead)
       '}', #f =>
         #f;  // done
       '~' =>
-        p.consume;
-        let link :: <link> = parse-link(p);
-        struct[make-compound-key("@delete@", link.link-name)] := link;
-        loop(n);
+        parser.consume;
+        let path :: <string> = parse-path(parser);
+        remove-key!(struct, path);
+        loop();
       '@' =>
-        p.consume;
-        select (p.lookahead)
-          'e' =>
-            expect(p, "extends", ":");
-            let key = make-compound-key("@extends@", integer-to-string(n));
-            struct[key] := parse-link(p);
-            loop(n + 1);
-          'f' =>
-            expect(p, "file", ":");
-            let filename = parse-any(p);
-            let key = make-compound-key("@file@", integer-to-string(n));
-            select (filename by instance?)
-              <string> =>
-                // @file: "foo.coil"
-                // TODO(cgay): This should really merge against the current
-                // pathname, not the original pathname passed to the parser.
-                // i.e., nested @file links won't use the correct relative path.
-                // TODO(cgay): catch circular @file references.
-                let file = as(<file-locator>, filename);
-                if (p.source-locator)
-                  file := merge-locators(file, p.source-locator);
-                end;
-                struct[key] := parse-coil(file);
-                loop(n + 1);
-              <sequence> =>
-                // @file: [ "foo.coil" @root.a.b ]
-                let (filename, path) = apply(values, filename);
-                let file-struct = parse-coil(as(<file-locator>, filename));
-                let target :: <struct> = file-struct[path];
-                target.struct-parent := struct;
-                struct[key] := target;
-                loop(n + 1);
-              otherwise =>
-                parse-error(p, "Expected a filename for @file but got %=",
-                            filename);
-            end select;
-          'm' =>
-            expect(p, "map", ":");
-            parse-error(p, "@map is not supported.");
-          otherwise =>
-            parse-error(p, "Unrecognized special attribute");
-        end select;
-        loop(n);
+        parser.consume;
+        parse-special-key(parser, struct);
+        loop();
       otherwise =>
-        let (key, simple-key) = parse-key(p);
-        expect(p, "", ":", "");
-        let value = parse-any(p, key: simple-key);
+        let key = parse-key(parser, struct);
+        expect(parser, "", ":", "");
+        let elements = split(key, '.');
+        let name = elements[elements.size - 1];
+        let value = parse-any(parser, name: name, allow-struct?: #t);
         struct[key] := value;
-        if (instance?(value, <struct>) & ~value.struct-parent)
-          value.struct-parent := struct;
-        end;
-        loop(n);
+        loop();
     end;
   end iterate;
   struct
 end method parse-struct-attributes;
 
+// Parse @extends or @file.  The '@' has already been consumed.
+define method parse-special-key
+    (parser :: <coil-parser>, struct :: <struct-prototype>) => ()
+  select (parser.lookahead)
+    'e' =>
+      expect(parser, "extends", ":");
+      let extendee = struct[parse-path(parser)];
+      if (~instance?(extendee, <struct>))
+        parse-error(parser, "Target of @extends reference is not a struct.");
+      else
+        extend-struct(parser, struct, extendee);
+      end;
+    'f' =>
+      expect(parser, "file", ":");
+      parse-file(parser, struct);
+    'm' =>
+      expect(parser, "map", ":");
+      parse-error(parser, "@map is not supported.");
+    otherwise =>
+      parse-error(parser, "Unrecognized special attribute");
+  end select
+end method parse-special-key;
+
+// Extend struct with the values from source.
+define method extend-struct
+    (parser :: <coil-parser>, struct :: <struct-prototype>, source :: <struct>) => ()
+  for (key in source.struct-order)
+    add-new!(struct.secondary-order, key);
+    struct.secondary-values[key] := source[key];
+  end;
+end method extend-struct;
+
+// Synopsis: Parse "@file: <spec>" where <spec> is a pathname string or
+//           a list of [ "pathname" path.to.struct ] and incorporate the
+//           target struct's values.  The "@file:" has already been consumed.
+define method parse-file
+    (parser :: <coil-parser>, struct :: <struct-prototype>) => ()
+  local method fail ()
+          parse-error(parser, "Target of @file keyword must be a filename or a "
+                        "list of the form [ 'filename' 'path.to.struct' ].");
+        end;
+  let target = parse-any(parser, name: "@root", allow-struct?: #t);
+  let path = "@root";
+  select (target by instance?)
+    <string> => #f;
+    <sequence> =>
+      if (target.size ~= 2
+            | ~every?(rcurry(instance?, <string>), target))
+        fail();
+      else
+        path := target[1];
+        target := target[0];
+      end;
+    otherwise => fail();
+  end;
+  // TODO(cgay): This should really merge against the current
+  // pathname, not the original pathname passed to the parser.  i.e.,
+  // nested @file links won't use the correct relative path.
+  // TODO(cgay): catch circular @file references.
+  let file = as(<file-locator>, target);
+  if (parser.source-locator)
+    file := merge-locators(file, parser.source-locator);
+  end;
+  let file-struct = parse-coil(file);
+  let extendee = file-struct[path];
+  if (~instance?(extendee, <struct>))
+    parse-error(parser, "Target of @file reference is not a struct.");
+  else
+    extend-struct(parser, struct, extendee);
+  end
+end method parse-file;
 
 /// Synopsis: parse and return any valid coil object.  A struct, list,
 ///           integer, float, string, boolean, or None.  This is used for
@@ -239,54 +269,56 @@ end method parse-struct-attributes;
 ///           Note that this may only be called when an ENTIRE OBJECT is
 ///           expected, which specifically excludes parsing a path.
 /// Arguments:
-///   p   - Coil parser.
-///   key - The key for which this value is being parsed.  This is used
+///   parser - Coil parser.
+///   for-key - The key for which this value is being parsed.  This is used
 ///         to give a name to the struct created, if this method parses
-///         a struct.  #f indicates that this is not called from
-///         parse-struct-attributes, which is not allowed.
+///         a struct.  #f indicates that this is not called in a struct
+///         context
 ///
 define method parse-any
-    (p :: <coil-parser>, #key key :: false-or(<string>))
+    (parser :: <coil-parser>,
+     #key name :: false-or(<string>), allow-struct? :: <boolean>)
  => (object :: <object>)
-  eat-whitespace-and-comments(p);
-  let char = p.lookahead;
+  eat-whitespace-and-comments(parser);
+  let char = parser.lookahead;
   select (char by member?)
     "'\"" =>
-      parse-string(p);
+      parse-string(parser);
     "{" =>
-      if (~key)
-        parse-error(p, "Structs are not allowed inside of lists.");
+      if (~allow-struct?)
+        parse-error(parser, "Structs are not allowed inside of lists.");
       end;
-      parse-struct(p, key);
+      parse-struct(parser, name);
     "[" =>
-      parse-list(p);
+      parse-list(parser);
     "-0123456789" =>
-      parse-number(p);
+      parse-number(parser);
     // TODO: These three aren't right because they could be TrueXXX etc.
     //       That's one reason a real tokenizer separate from the parser
     //       would be better.
     "T" =>
-      expect(p, "True");
+      expect(parser, "True");
       #t;
     "F" =>
-      expect(p, "False");
+      expect(parser, "False");
       #f;
     "N" =>
-      expect(p, "None");
+      expect(parser, "None");
       $none;
     ".@" =>
-      parse-link(p);
+      // TODO(cgay): fix this to return the target of the path
+      parse-path(parser);
     otherwise =>
-      parse-error(p, "Unexpected input starting with %=.", char);
+      parse-error(parser, "Unexpected input starting with %=.", char);
   end select
 end method parse-any;
 
 /// Synopsis: Return the next unread input character, or #f if at end.
 define method lookahead
-    (p :: <coil-parser>, #key offset :: <integer> = 0)
+    (parser :: <coil-parser>, #key offset :: <integer> = 0)
  => (char :: false-or(<character>))
-  let text = p.input-text;
-  let idx = p.current-index;
+  let text = parser.input-text;
+  let idx = parser.current-index;
   if (idx + offset >= text.size)
     #f
   else
@@ -297,46 +329,46 @@ end method lookahead;
 /// Synopsis: Consume and return the next unread input character.  If at
 ///           end-of-input signal <coil-parse-error>.
 define method consume
-    (p :: <coil-parser>) => (char :: false-or(<character>))
-  let char = p.lookahead;
+    (parser :: <coil-parser>) => (char :: false-or(<character>))
+  let char = parser.lookahead;
   if (char)
-    inc!(p.current-index);
+    inc!(parser.current-index);
     if (char = '\n')
-      inc!(p.line-number);
-      p.column-number := 1;
+      inc!(parser.line-number);
+      parser.column-number := 1;
     else
-      inc!(p.column-number);
+      inc!(parser.column-number);
     end;
     char
   else
-    parse-error(p, "End of coil text encountered.");
+    parse-error(parser, "End of coil text encountered.");
   end;
 end method consume;
 
 define method expect
-    (p :: <coil-parser>, #rest strings :: <string>) => ()
+    (parser :: <coil-parser>, #rest strings :: <string>) => ()
   for (string in strings)
-    let start = p.current-index;
+    let start = parser.current-index;
     for (char in string)
-      if (char = p.lookahead)
-        p.consume
+      if (char = parser.lookahead)
+        parser.consume
       else
-        parse-error(p, "Expected %= but got %=",
-                    string, slice(p.input-text, start, p.current-index));
+        parse-error(parser, "Expected %= but got %=",
+                    string, slice(parser.input-text, start, parser.current-index));
       end;
     end;
-    eat-whitespace(p);
+    eat-whitespace(parser);
   end;
 end method expect;
 
 define method eat-whitespace-and-comments
-    (p :: <coil-parser>) => ()
+    (parser :: <coil-parser>) => ()
   iterate loop ()
-    if (p.lookahead = '#')
-      eat-comment(p);
+    if (parser.lookahead = '#')
+      eat-comment(parser);
       loop()
-    elseif (member?(p.lookahead, $whitespace))
-      p.consume;
+    elseif (member?(parser.lookahead, $whitespace))
+      parser.consume;
       loop()
     end;
   end;
@@ -345,60 +377,36 @@ end;
 /// Synopsis: Consume until not looking at a whitespace char.
 ///
 define method eat-whitespace
-    (p :: <coil-parser>) => ()
-  while (member?(p.lookahead, $whitespace))
-    p.consume;
+    (parser :: <coil-parser>) => ()
+  while (member?(parser.lookahead, $whitespace))
+    parser.consume;
   end;
 end;
 
 /// Synopsis: Consume a comment that starts with '#' and ends with '\n'.
 ///
 define method eat-comment
-    (p :: <coil-parser>) => ()
-  while (p.consume ~= '\n')
+    (parser :: <coil-parser>) => ()
+  while (parser.consume ~= '\n')
   end;
 end;
 
 /// Synopsis: Parse a struct key, which may be a simple identifier such
-///           as "a" or a compound identifier such as "a.b.c".  Compound
-///           identifiers are resolved during the second pass.
+///           as "a" or a compound identifier such as "..a.b.c".
 define method parse-key
-    (p :: <coil-parser>)
- => (key :: <string>, simple-key :: false-or(<string>))
-  let match = regex-search($extended-key-regex, p.input-text,
-                           start: p.current-index);
+    (parser :: <coil-parser>, parent :: <struct>)
+ => (key :: <string>)
+  let match = regex-search($extended-key-regex, parser.input-text,
+                           start: parser.current-index);
   if (match)
     let (key, _, epos) = match-group(match, 0);
-    p.current-index := epos;
-    adjust-column-number(p);
-    if (member?('.', key))
-      values(make-compound-key("@key@", key),
-             elt(split(key, '.'), -1))
-    else
-      values(key, key)
-    end
+    parser.current-index := epos;
+    adjust-column-number(parser);
+    key
   else
-    parse-error(p, "Struct key expected");
+    parse-error(parser, "Struct key expected");
   end
 end method parse-key;
-
-define method make-compound-key
-    (prefix :: <string>, key :: <string>)
- => (compound-key :: <string>)
-  // This feels a bit hackish, but is necessary because dot ('.') is treated
-  // specially by element(<struct>, foo).
-  assert(prefix.size > 0 & prefix[0] = '@');
-  concatenate(prefix, map(method (c)
-                            iff(c = '.', '@', c)
-                          end,
-                          key))
-end;
-
-define method unmake-compound-key
-    (compound-key :: <string>) => (key :: <string>)
-  assert(compound-key.size > 0 & compound-key[0] = '@');
-  join(slice(split(compound-key, '@'), 2, #f), ".")
-end;
 
 /// Synopsis: Fixup the parser's 'column-number' slot based on the
 ///           value of the 'current-index' slot, by looking back for the
@@ -406,14 +414,14 @@ end;
 ///           is expected to be called by parsing methods that adjust
 ///           current-index by means other than calling 'consume'.
 define method adjust-column-number
-    (p :: <coil-parser>) => (column-number :: <integer>)
-  iterate loop (index = p.current-index - 1, n = 1)
+    (parser :: <coil-parser>) => (column-number :: <integer>)
+  iterate loop (index = parser.current-index - 1, n = 1)
     if (index < 0)
-      p.column-number := n
+      parser.column-number := n
     else
-      let char = p.input-text[index];
+      let char = parser.input-text[index];
       if (char = '\n' | char = '\r')
-        p.column-number := n
+        parser.column-number := n
       else
         loop(index - 1, n + 1)
       end
@@ -436,141 +444,72 @@ define method print-object
 end;
 
 
-/// Synopsis: Follow 'link' and return the value it points to.
-/// If this traverses a struct that hasn't had its references expanded,
-/// it expands them first.
-/// Arguments:
-///   link   - The <link> to follow.
-///   anchor - The struct to which the link is relative, if not an
-///            absolute link reference such as @root.a.b.c.
-//
-// TODO: Consider making struct["..a.b"] just work.  I.e., fold this into
-//       element(<struct>, key).
-//
-// TODO: Give error when two structs @extend each other.
-//
-define method follow-links
-    (p :: <coil-parser>, link :: <link>, anchor :: <struct>)
- => (target :: <object>)
-  let keys = as(<list>, split(link.link-name, '.'));
-  if (keys.head = "")
-    keys := keys.tail;     // The initial dot is not used.
-  end;
-  iterate loop (struct = anchor, keys = keys, path = #())
-    case
-      ~struct =>
-        parse-error(p, "Link %= tries to reference the parent of @root, "
-                    "which doesn't exist.",
-                    link.link-name);
-      empty?(keys) =>
-        struct;    // Can be any value, not necessarily a <struct>.
-      ~instance?(struct, <struct>) =>
-        parse-error(p, "Link %= traverses %=, which is not a struct.",
-                    link.link-name,
-                    join(reverse(path), "."));
-      otherwise =>
-        if (struct ~== anchor & struct.has-references?)
-          // Must resolve references of structs through which the link
-          // passes, in case the expansion adds keys.
-          resolve-references!(p, struct, #());
-        end;
-        let key = keys.head;
-        let rest = keys.tail;
-        select (key by \=)
-          "" =>          // We split on '.', so "..." turns into "", ""
-            loop(struct.struct-parent, rest, pair(key, path));
-          "@root" =>
-            loop(find-root(struct), rest, pair(key, path));
-          otherwise =>
-            let value = element(struct, key, default: unfound());
-            if (unfound?(value))
-              parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
-                          link.link-name, key, struct);
-            elseif (empty?(rest))
-              value
-            else
-              loop(value, rest, pair(key, path))
-            end;
-        end select;
-    end case
-  end iterate
-end method follow-links;
-
-define method has-references?
-    (struct :: <struct>) => (_ :: <boolean>)
-  any?(rcurry(starts-with?, "@"), key-sequence(struct))
-end;
-
-
-/// Synopsis: Parse a link to another element in the configuration.
+/// Synopsis: Parse a path to another element in the configuration.
 ///           For example, "@root.foo" or "...b".
-define method parse-link
-    (p :: <coil-parser>) => (link :: <link>)
-  eat-whitespace-and-comments(p);
-  let match = regex-search($path-regex, p.input-text, start: p.current-index);
+define method parse-path
+    (parser :: <coil-parser>) => (path :: <string>)
+  eat-whitespace-and-comments(parser);
+  let match = regex-search($path-regex, parser.input-text,
+                           start: parser.current-index);
   if (match)
-    let (name, _, epos) = match-group(match, 0);
-    p.current-index := epos;
-    adjust-column-number(p);
-    if (ends-with?(name, "."))
-      parse-error(p, "Links may not end with '.' since this would result "
-                  "in a cycle being created.");
-    end;
-    make(<link>, name: name)
+    let (path, _, epos) = match-group(match, 0);
+    parser.current-index := epos;
+    adjust-column-number(parser);
+    path
   else
-    parse-error(p, "Link name expected");
+    parse-error(parser, "Path expected");
   end
-end method parse-link;
+end method parse-path;
 
 /// Synopsis: Parse a coil list, which we represent as a vector in Dylan.
 ///
 define method parse-list
-    (p :: <coil-parser>) => (list :: <vector>)
+    (parser :: <coil-parser>) => (list :: <vector>)
   let list = make(<stretchy-vector>);
-  if (p.lookahead ~= '[')
-    parse-error(p, "List expected");
+  if (parser.lookahead ~= '[')
+    parse-error(parser, "List expected");
   end;
-  p.consume;  // '['
+  parser.consume;  // '['
   iterate loop ()
-    eat-whitespace-and-comments(p);
-    if (p.lookahead ~= ']')
-      add!(list, parse-any(p, key: #f));
+    eat-whitespace-and-comments(parser);
+    if (parser.lookahead ~= ']')
+      add!(list, parse-any(parser, allow-struct?: #f));
       loop()
     end
   end;
-  expect(p, "]");
+  expect(parser, "]");
   list
 end method parse-list;
 
 /// Synopsis: Parse an integer or float (digits on both sides of the '.' required)
 ///
 define method parse-number
-    (p :: <coil-parser>) => (number :: <number>)
+    (parser :: <coil-parser>) => (number :: <number>)
   let chars = make(<stretchy-vector>);
-  if (p.lookahead = '-')
-    add!(chars, p.consume);
+  if (parser.lookahead = '-')
+    add!(chars, parser.consume);
   end;
-  if (~member?(p.lookahead, "0123456789"))
-    parse-error(p, "Invalid number: Digit expected but got %=",
-                p.lookahead);
+  if (~member?(parser.lookahead, "0123456789"))
+    parse-error(parser, "Invalid number: Digit expected but got %=",
+                parser.lookahead);
   end;
   iterate loop ()
-    let char = p.lookahead;
+    let char = parser.lookahead;
     if (member?(char, "0123456789"))
-      p.consume;
+      parser.consume;
       add!(chars, char);
       loop();
     elseif (char = '.')
       if (member?('.', chars))
-        parse-error(p, "Invalid float: '.' already seen.");
+        parse-error(parser, "Invalid float: '.' already seen.");
       end;
-      p.consume;
+      parser.consume;
       add!(chars, char);
       loop();
     elseif (~char)
       #f
     elseif (~member?(char, $token-terminators))
-      parse-error(p, "Invalid number: %= unexpected");
+      parse-error(parser, "Invalid number: %= unexpected");
     end;
   end;
   let string = map-as(<string>, identity, chars);
@@ -584,25 +523,25 @@ end method parse-number;
 /// Synopsis: Parse a string.  It may be a single or multi-line string.
 ///
 define method parse-string
-    (p :: <coil-parser>) => (string :: <string>)
-  let char1 = p.consume;
+    (parser :: <coil-parser>) => (string :: <string>)
+  let char1 = parser.consume;
   assert(member?(char1, "\"'"));
-  let char2 = p.lookahead;
+  let char2 = parser.lookahead;
   if (char1 = char2)
-    p.consume;
-    let char3 = p.lookahead;
+    parser.consume;
+    let char3 = parser.lookahead;
     if (char1 = char3)
-      p.consume;
-      parse-multi-line-string(p, char1)
+      parser.consume;
+      parse-multi-line-string(parser, char1)
     else
       ""
     end
   else
-    let string = parse-simple-string(p, char1);
-    if (p.lookahead ~= char1)
-      parse-error(p, "Unterminated string.  Expected \"'\"");
+    let string = parse-simple-string(parser, char1);
+    if (parser.lookahead ~= char1)
+      parse-error(parser, "Unterminated string.  Expected \"'\"");
     end;
-    p.consume;
+    parser.consume;
     string
   end
 end method parse-string;
@@ -618,25 +557,25 @@ define table $escapes = {
 ///           The start token (' or ") has already been consumed.
 ///
 define method parse-simple-string
-    (p :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
+    (parser :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
-    let char = p.lookahead;
+    let char = parser.lookahead;
     if (escaped?)
-      p.consume;
+      parser.consume;
       add!(chars, element($escapes, char, default: char));
       loop(#f)
     else
       select (char)
         '\\' =>
-          p.consume;
+          parser.consume;
           loop(#t);
         '\n', '\r' =>
-          parse-error(p, "Unterminated string");
+          parse-error(parser, "Unterminated string");
         start-char =>
           map-as(<string>, identity, chars);   // done
         otherwise =>
-          p.consume;
+          parser.consume;
           add!(chars, char);
           loop(#f);
       end
@@ -648,21 +587,21 @@ end method parse-simple-string;
 ///           The start token (''' or """) has already been consumed.
 ///
 define method parse-multi-line-string
-    (p :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
+    (parser :: <coil-parser>, start-char :: <character>) => (_ :: <string>)
   let chars = make(<stretchy-vector>);
   iterate loop (escaped? = #f)
-    let char = p.consume;
+    let char = parser.consume;
     if (escaped?)
       add!(chars, element($escapes, char, default: char));
       loop(#f)
     elseif (char = '\\')
       loop(#t)
     elseif (char = start-char)
-      let ch2 = lookahead(p);
-      let ch3 = lookahead(p, offset: 1);
+      let ch2 = lookahead(parser);
+      let ch3 = lookahead(parser, offset: 1);
       if (char = ch2 & char = ch3)
-        p.consume;
-        p.consume;
+        parser.consume;
+        parser.consume;
         map-as(<string>, identity, chars)  // done
       else
         add!(chars, char);
@@ -674,168 +613,3 @@ define method parse-multi-line-string
     end
   end
 end method parse-multi-line-string;
-
-
-//// Pass Two
-//// Resolve extension, deletion, compound keys (e.g., "x.y.z: 2"),
-//// and references (e.g., "x: y.z").
-
-
-/// Synopsis: Resolve @extends, @file, @delete, and @key references in 'struct'.
-///
-define method resolve-references!
-    (p :: <coil-parser>, struct :: <struct>, seen :: <list>)
- => ()
-  if (~member?(struct, seen))
-    // This loop modifies 'struct', so doesn't iterate over it directly.
-    for (key in slice(struct.key-sequence, 0, #f))
-      let value = struct[key];
-      select (key by starts-with?)
-        "@extends@" =>
-          resolve-extends!(p, struct, value, pair(struct, seen));
-          remove-key!(struct, key);
-        "@file@" =>
-          extend(p, struct, value, seen);
-          remove-key!(struct, key);
-        "@key@" =>
-          resolve-key!(p, struct, key, value);
-          remove-key!(struct, key);
-          if (instance?(value, <struct>))
-            resolve-references!(p, value, seen);
-          end;
-        "@delete@" =>
-          let link :: <link> = value;
-          delete-key!(p, struct, link);
-          remove-key!(struct, key);  // Delete the temp "@delete@" key.
-        otherwise =>
-          assert(key[0] ~= '@');
-          if (instance?(value, <link>))
-            let link :: <link> = value;
-            value := follow-links(p, link, struct);
-            if (instance?(value, <struct>) & descendant?(value, struct))
-              parse-error(p, "Link target %= is a descendant of containing struct.",
-                          link.link-name);
-            end;
-          end;
-          // TODO: This gets the order wrong.  It should be easy enough to add
-          //       an "insert" method for <ordered-table> later on.  Generally
-          //       people don't care about order for configs, so it can wait.
-          struct[key] := value;
-          if (instance?(value, <struct>))
-            // Do not add struct to 'seen' here.
-            resolve-references!(p, value, seen);
-          end;
-      end select;
-    end for;
-  end if;
-end method resolve-references!;
-
-/// Synopsis: Delete the key designated by 'link', which is relative to 'struct'.
-///
-define method delete-key!
-    (p :: <coil-parser>, struct :: <struct>, link :: <link>)
- => ()
-  let path = as(<list>, split(link.link-name, '.'));
-  iterate loop (struct = struct, path = path, seen = #())
-    if (empty?(path.tail))
-      remove-key!(struct, path.head);
-    else
-      let child = element(struct, path.head, default: unfound());
-      case
-        unfound?(child) =>
-          parse-error(p, "Invalid link %=: %= is not present as a key for %=.",
-                      link.link-name,
-                      join(reverse(seen), "."),
-                      struct);
-        ~instance?(child, <struct>) =>
-          parse-error(p, "Invalid link %=: %= does not name a struct.",
-                      link.link-name,
-                      join(reverse(seen), "."));
-        otherwise =>
-          loop(child, path.tail, pair(path.head, seen));
-      end case;
-    end;
-  end;
-end method delete-key!;
-
-
-/// Synopsis: Extend 'containing-struct' with the values in the struct
-///           named by 'link'.
-/// Arguments:
-///   seen  - A list of canonical names that have already been seen during
-///           this recursion, to prevent loops.
-define method resolve-extends!
-    (p :: <coil-parser>, containing-struct :: <struct>, link :: <link>, seen :: <list>)
- => ()
-  let target = follow-links(p, link, containing-struct);
-  if (~instance?(target, <struct>))
-    parse-error(p, "@extends target (%s) should be a struct but is a %s.",
-                link.link-name, target.object-class);
-  elseif (descendant?(target, containing-struct))
-    parse-error(p, "@extends target is a descendant of containing struct.");
-  elseif (member?(target, seen))
-    parse-error(p, "@extends circularity: %s",
-                join(reverse(pair(target, seen)), " -> ", key: struct-full-name));
-  else
-    extend(p, containing-struct, target, pair(target, seen));
-  end;
-end method resolve-extends!;
-
-
-/// Synopsis: Extend 'struct' with the keys and values from 'extendee'.
-///
-// TODO: get order correct
-define method extend
-    (p :: <coil-parser>, struct :: <struct>, extendee :: <struct>, seen :: <list>)
- => ()
-  for (value keyed-by key in extendee)
-    if (instance?(value, <struct>))
-      // Deep copy any structs in the extendee so that they can be
-      // modified without affecting other places where they're extended.
-      value := deep-copy(value);
-
-      // Note that the parent of child-struct was set by the first pass, so
-      // references are resolved relative to where it occurs in the text.
-      resolve-references!(p, value, seen);
-    end;
-    struct[key] := value;
-  end;
-end method extend;
-
-
-/// Synopsis: Store a value for a compound key.  e.g., "a.b.c: 1"
-///           Note that this creates empty structs if any intervening keys
-///           don't exist.
-// TODO: It might be good to have a way to warn about intervening keys
-//       that don't exist, since it could be a mistake.
-define method resolve-key!
-    (p :: <coil-parser>, struct :: <struct>, compound-key :: <string>, value)
- => ()
-  let link-name = unmake-compound-key(compound-key);
-  iterate loop (struct = struct,
-                path = as(<list>, split(link-name, '.')),
-                seen = #())
-    let simple-key = path.head;
-    if (path.size = 1)
-      struct[simple-key] := value;
-      if (instance?(value, <struct>))
-        value.struct-parent := struct;
-      end;
-    else
-      let sub-struct = element(struct, simple-key, default: unfound());
-      if (unfound?(sub-struct))
-        let sub-struct = make(<struct>, name: simple-key, parent: struct);
-        struct[simple-key] := sub-struct;
-        loop(sub-struct, path.tail, pair(simple-key, seen));
-
-      elseif (instance?(sub-struct, <struct>))
-        loop(sub-struct, path.tail, pair(simple-key, seen));
-
-      else
-        parse-error(p, "Invalid key, %=.  %= does not name a struct.",
-                    link-name,
-                    join(reverse(pair(simple-key, seen)), "."));
-      end;
-    end;
-  end;
-end method resolve-key!;

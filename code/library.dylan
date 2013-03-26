@@ -74,8 +74,7 @@ define module %coil
   // Links
   export
     <link>,
-    link-name,
-    follow-links;
+    link-name;
 
   // Structs
   export
@@ -83,7 +82,7 @@ define module %coil
 
   // Temp. This should be moved to common-dylan.
   export
-    <invalid-key-error>;
+    <key-error>;
 
 end module %coil;
 

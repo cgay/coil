@@ -10,7 +10,8 @@ License:   See LICENSE.txt in this distribution for details.
 ///   Keys are strings.
 ///
 define open class <struct> (<mutable-explicit-key-collection>)
-  slot struct-entries :: <list> = #();
+  constant slot struct-values :: <string-table> = make(<string-table>);
+  constant slot struct-order :: <stretchy-vector> = make(<stretchy-vector>);
   slot struct-parent :: false-or(<struct>) = #f,
     init-keyword: parent:;
   // This is for debugging only.  For the top-level struct in a file
@@ -19,6 +20,25 @@ define open class <struct> (<mutable-explicit-key-collection>)
   constant slot %struct-name :: false-or(<string>) = #f,
     init-keyword: name:;
 end class <struct>;
+
+define method initialize
+    (struct :: <struct>, #key copy-from :: false-or(<struct>))
+  if (copy-from)
+    // Recursively copy the given struct.  This is primarily intended
+    // for replacing the <struct-prototype> parse tree with actual
+    // structs.  It iterates over the keys rather than using "for (v
+    // keyed-by k in prototype)" so as to explicitly call the
+    // "element" method.
+    let dict = copy-from.struct-values;
+    for (key in copy-from.struct-order)
+      let value = copy-from[key];
+      dict[key] := select (value by instance?)
+                     <struct> => make(<struct>, copy-from: value);
+                     otherwise => value;
+                   end;
+    end;
+  end;
+end method initialize;
 
 define method struct-name
     (struct :: <struct>) => (name :: <string>)
@@ -30,31 +50,9 @@ define method print-object
  => ()
   format(stream, "<struct %s (%d item%s)>",
          struct.struct-full-name,
-         struct.struct-entries.size,
+         struct.struct-values.size,
          iff(struct.size = 1, "", "s"));
 end;
-
-define class <entry> (<object>)
-  constant slot entry-key :: <string>, required-init-keyword: key:;
-  slot entry-value :: <object>, required-init-keyword: value:;
-end;
-
-define inline function find-entry
-    (lst :: <list>, key :: <string>)
- => (entry :: false-or(<entry>), index :: <integer>)
-  iterate loop (lst = lst, index = 0)
-    if (empty?(lst))
-      values(#f, -1)
-    else
-      let entry = lst.head;
-      if (entry.entry-key = key)
-        values(entry, index)
-      else
-        loop(lst.tail, index + 1)
-      end
-    end
-  end
-end function find-entry;
 
 define method forward-iteration-protocol
     (c :: <struct>)
@@ -75,17 +73,17 @@ define method forward-iteration-protocol
            state = limit
          end,
          // current-key
-         method (t :: <struct>, state :: <integer>) => (key :: <object>)
-           t.struct-entries[state].entry-key
+         method (struct :: <struct>, state :: <integer>) => (key :: <object>)
+           struct.struct-order[state]
          end,
          // current-element
-         method (t :: <struct>, state :: <integer>) => (key :: <object>)
-           t.struct-entries[state].entry-value
+         method (struct :: <struct>, state :: <integer>) => (key :: <object>)
+           struct.struct-values[struct.struct-order[state]]
          end,
          // current-element-setter
-         method (value :: <object>, t :: <struct>, state :: <integer>)
+         method (value :: <object>, struct :: <struct>, state :: <integer>)
              => (value :: <object>)
-           t.struct-entries[state].entry-value := value
+           struct.struct-values[state] := value
          end,
          // copy-state
          method (t :: <struct>, state :: <integer>) => (state :: <integer>)
@@ -95,42 +93,42 @@ end method forward-iteration-protocol;
 
 define method key-sequence
     (struct :: <struct>) => (v :: <vector>)
-  let v = make(<vector>, size: struct.size);
-  for (i from 0 below v.size,
-       entry in struct.struct-entries)
-    v[i] := entry.entry-key
-  end;
-  v
+  map-as(<vector>, identity, struct.struct-order)
 end method key-sequence;
 
 define method size
     (struct :: <struct>) => (size :: <integer>)
-  struct.struct-entries.size
+  struct.struct-order.size
 end;
 
+// key may be a simple key or a dotted path.
 define method element-setter
-    (new-value :: <object>, struct :: <struct>, key :: <string>)
+    (new-value :: <object>, struct :: <struct>, key-or-path :: <string>)
  => (new-value :: <object>)
-  let entry = find-entry(struct.struct-entries, key);
-  if (entry)
-    entry.entry-value := new-value;
-  else
-    let entry = make(<entry>, key: key, value: new-value);
-    struct.struct-entries := concatenate(struct.struct-entries, list(entry));
-  end;
+  local method node-handler (node, simple-key, path)
+          if (path == key-or-path)
+            add-new!(node.struct-order, simple-key, test: \=);
+            node.struct-values[simple-key] := new-value;
+            if (instance?(new-value, <struct>) & ~new-value.struct-parent)
+              new-value.struct-parent := node;
+            end;
+          end;
+        end;
+  do-path(key-or-path, struct, node-handler);
   new-value
 end method element-setter;
 
 define method remove-key!
-    (struct :: <struct>, key :: <object>) => (present? :: <boolean>)
-  let content :: <list> = struct.struct-entries;
-  let (entry, index) = find-entry(content, key);
-  if (entry)
-    struct.struct-entries
-      := concatenate(copy-sequence(content, end: index),
-                     copy-sequence(content, start: index + 1));
-    #t
-  end
+    (struct :: <struct>, key-or-path :: <string>) => (present? :: <boolean>)
+  let present? = #f;
+  local method node-handler (node, simple-key, path)
+          if (path == key-or-path)
+            remove!(node.struct-order, simple-key, test: \=);
+            present? := remove-key!(node.struct-values, simple-key);
+          end;
+        end;
+  do-path(key-or-path, struct, node-handler);
+  present?
 end method remove-key!;
 
 define method key-test
@@ -178,54 +176,29 @@ define constant $internal-unfound = list("iUNFOUND");
 define method element
     (struct :: <struct>, key :: <string>, #key default = $internal-unfound)
  => (object)
-  if (member?('.', key))
-    iterate loop (struct = struct,
-                  path = as(<list>, split(key, '.')),
-                  seen = #())
-      let subkey = path.head;
-      let value = element(struct, subkey, default: $internal-unfound);
-      if (value == $internal-unfound)
-        if (default == $internal-unfound)
-          let reason = iff(empty?(seen),
-                           "",
-                           format-to-string(" (because %= doesn't exist)",
-                                            join(path, ".")));
-          error(make(<invalid-key-error>,
-                     format-string: "The key %= does not exist%s.",
-                     format-arguments: list(key, reason)));
-        else
-          default
-        end
-      elseif (path.size = 1)
-        value
-      elseif (~instance?(value, <struct>))
-        if (supplied?(default))
-          // This could conceivably be an error
-          default
-        else
-          error(make(<invalid-key-error>,
-                     format-string: "The key %= does not exist. (%= is not a struct.)",
-                     format-arguments: list(key, join(path, "."))));
-        end
-      else
-        loop(value, path.tail, pair(subkey, seen))
-      end
-    end
-  elseif (key = "@root")
-    iterate find-root (st = struct)
-      iff(st.struct-parent, find-root(st.struct-parent), st)
-    end
-  else
-    let entry = find-entry(struct.struct-entries, key);
-    iff(entry,
-        entry.entry-value,
-        iff(default == $internal-unfound,
-            error(make(<invalid-key-error>,
-                       format-string: "The key %= does not exist.",
-                       format-arguments: list(key))),
-            default))
-  end
+  let result = default;
+  local method node-handler (node, simple-key, path)
+          if (path == key)
+            add-new!(node.struct-order, simple-key);
+            let val = %element(node, simple-key, default);
+            if (val == $internal-unfound)
+              raise(<key-error>, "Key %s not found.", key);
+            else
+              result := val
+            end;
+          end;
+        end;
+  do-path(key, struct, node-handler);
+  result
 end method element;
+
+// Gives <struct-prototype> a place to override.  This only handles
+// simple keys.
+define method %element
+    (struct :: <struct>, key :: <string>, default :: <object>)
+ => (object)
+  element(struct.struct-values, key, default: default)
+end;
 
 define method deep-copy
     (struct :: <struct>, #key seen :: <list> = #(), signaler = error)
@@ -247,6 +220,37 @@ define method deep-copy
     new
   end
 end method deep-copy;
+
+// Apply a function to each node in a dotted path.  Ensures that each
+// non-terminal element of the path is a struct and optionally ensures
+// that the terminal element is a struct.
+define method do-path
+    (path :: <string>, struct :: <struct>, node-handler :: <function>,
+     #key require-struct? :: <boolean>)
+ => ()
+  iterate loop (parent = struct, elements = as(<list>, split(path, '.')), seen = #())
+    let simple-key = elements.head;
+    let new-seen = pair(simple-key, seen);
+    let value = if (simple-key = "@root")
+                  element(parent, simple-key, default: $internal-unfound)
+                else
+                  iterate find-root (st = parent)
+                    iff(st.struct-parent, find-root(st.struct-parent), st)
+                  end
+                end;
+    if (value == $internal-unfound)
+      raise(<key-error>,
+            "Invalid struct path %s: %s does not exist.",
+            path, join(reverse(new-seen), "."));
+    elseif ((require-struct? | (elements.size > 1)) & ~instance?(value, <struct>))
+      raise(<key-error>,
+            "Invalid struct path %s: %s does not name a struct.",
+            path, join(reverse(new-seen), "."));
+    end;
+    node-handler(value, simple-key, join(reverse(new-seen), "."));
+    loop(value, elements.tail, new-seen);
+  end;
+end method do-path;
 
 
 //// Outputting coil

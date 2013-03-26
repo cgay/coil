@@ -31,7 +31,6 @@ define suite basic-suite ()
   test test-list;
   test test-nested-list;
   test test-reparse;
-  test test-follow-links;
   test parse-coil-returns-struct?;
   test compound-key-creates-sub-structs?;
 end suite basic-suite;
@@ -183,34 +182,6 @@ define test test-reparse ()
   check-equal("reparsed same as orig?", coil, new);
 end test test-reparse;
 
-define test test-follow-links ()
-  let parser = make(<coil-parser>, source: "", text: "");
-  let root = make(<struct>, name: "@root");
-  let child = make(<struct>, name: "child");
-  let grandchild = make(<struct>, name: "grandchild");
-
-  // parent links
-  child.struct-parent := root;
-  grandchild.struct-parent := child;
-  
-  // child links
-  root["child"] := child;
-  child["grandchild"] := grandchild;
-
-  for (item in list(list("..child", child, child),
-                    list("...child", grandchild, child),
-                    list("...child.grandchild", grandchild, grandchild),
-                    list("@root", root, root),
-                    list("@root.child", root, child),
-                    list("@root.child.grandchild", root, grandchild)))
-    let (link-name, anchor, expected) = apply(values, item);
-    let actual = follow-links(parser, make(<link>, name: link-name), anchor);
-    check-equal(format-to-string("%= resolves correctly", link-name),
-                expected,
-                actual);
-  end;
-end test test-follow-links;
-
 
 //// @extends
 
@@ -257,7 +228,7 @@ define test test-extend-and-delete ()
   let tree = get-test-struct();
   check-equal("aaa", tree["B.a"], "a");
   check-equal("bbb", tree["B.b"], "b");
-  check-condition("ccc", <invalid-key-error>, tree["B.c"]);
+  check-condition("ccc", <key-error>, tree["B.c"]);
   check-equal("ddd", tree["B.e"], #["one", 2, "omg three"]);
   check-equal("size", tree["B"].size, 3);
 end;
@@ -273,7 +244,7 @@ define test test-extends-2 ()
   let tree = get-test-struct();
   check-equal("aaa", tree["D.a"], "a");
   check-equal("bbb", tree["D.b"], "b");
-  check-condition("ccc", <invalid-key-error>, tree["D.c"]);
+  check-condition("ccc", <key-error>, tree["D.c"]);
   check-equal("ddd", tree["D.e"], #["one", 2, "omg three"]);
   check-equal("size", tree["D"].size, 3);
 end;

@@ -10,8 +10,7 @@ define open class <coil-error> (<format-string-condition>, <error>)
 end;
 
 
-// TODO: move this to common-dylan or thereabouts, and fix up the exception
-//       hierarchy in general.
-define open class <invalid-key-error> (<format-string-condition>, <error>)
+/// Synopsis: Error finding/setting a struct key.
+define open class <key-error> (<format-string-condition>, <error>)
 end;
 
