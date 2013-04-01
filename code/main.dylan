@@ -38,20 +38,34 @@ define class <struct-prototype> (<struct>)
   constant slot deleted-keys :: <stretchy-vector> = make(<stretchy-vector>);
 end class <struct-prototype>;
 
+define method class-name
+    (struct :: <struct-prototype>) => (name :: <string>)
+  "struct-prototype"
+end;
+
+// Look up a simple key (not a path).  Locally set values (i.e.,
+// values set in the <struct> superclass) take precedence but if not
+// found then look at inherited values (unless locally deleted).
 define method %element
     (struct :: <struct-prototype>, key :: <string>, default :: <object>)
  => (object)
   if (member?(key, struct.deleted-keys, test: \=))
     default
   else
-    let v = element(struct.struct-values, key, default: $internal-default);
-    if (v == $internal-default)
+    let value = next-method();
+    if (value == $internal-default)
       element(struct.secondary-values, key, default: default)
     else
-      default
+      value
     end
   end
 end method %element;
+
+define method size
+    (struct :: <struct-prototype>) => (size :: <integer>)
+  let all-keys = union(struct.struct-order, struct.secondary-order, test: \=);
+  all-keys.size - intersection(all-keys, struct.deleted-keys, test: \=).size
+end;
 
 define method copy-struct-into
     (source :: <struct-prototype>, target :: <struct>) => ()
@@ -65,13 +79,18 @@ define method copy-struct-into
   for (key in source.secondary-order)
     if (~member?(key, source.deleted-keys, test: \=)
           & ~member?(key, source.struct-order, test: \=))
+      format-out("copying secondary %= = %=\n", key, source.secondary-values[key]);
       target[key] := source.secondary-values[key];
     end;
   end;
   for (key in source.struct-order)
     let value = source.struct-values[key];
+    format-out("copying primary %= = %=\n", key, value);
     target[key] := select (value by instance?)
-                     <struct> => make(<struct>, copy-from: value);
+                     <struct> =>
+                       let st = make(<struct>);
+                       copy-struct-into(value, st);
+                       st;
                      otherwise => value;
                    end;
   end;

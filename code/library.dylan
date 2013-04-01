@@ -65,7 +65,8 @@ define module %coil
   // Parser
   export
     <coil-parser>,
-    parse-any,
+    parse-object,
+    parse-non-struct-object,
     parse-list,
     parse-number,
     parse-string,

@@ -6,7 +6,7 @@ License:   See LICENSE.txt in this distribution for details.
 define library coil-test-suite
   use common-dylan;
   use io,
-    import: { format, standard-io, streams };
+    import: { format, format-out, standard-io, streams };
   use system,
     import: { file-system, locators };
   use testworks;
@@ -20,6 +20,7 @@ define module coil-test-suite
   use common-dylan, exclude: { format-to-string };
   use file-system,
     prefix: "fs/";
+  use format-out;
   use format;
   use locators;
   use regular-expressions;

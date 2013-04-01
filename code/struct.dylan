@@ -26,12 +26,23 @@ define method struct-name
   struct.%struct-name | "???"
 end;
 
+// I wish support for this were exported from the dylan library, but
+// it doesn't seem to be.
+define sealed generic class-name
+    (struct :: <struct>) => (name :: <string>);
+
+define method class-name
+    (struct :: <struct>) => (name :: <string>)
+  "struct"
+end;
+
 define method print-object
     (struct :: <struct>, stream :: <stream>)
  => ()
-  format(stream, "<struct %s (%d item%s)>",
+  format(stream, "<%s %s (%d item%s)>",
+         struct.class-name,
          struct.struct-full-name,
-         struct.struct-values.size,
+         struct.size,
          iff(struct.size = 1, "", "s"));
 end;
 
@@ -86,33 +97,23 @@ end;
 define method element-setter
     (new-value :: <object>, struct :: <struct>, key-or-path :: <string>)
  => (new-value :: <object>)
-  local method node-handler (node, simple-key, path)
-          format-out("element-setter.node-handler: simple-key = %=, path = %=\n",
-                     simple-key, path);
-          if (path = key-or-path)
-            format-out("  setting key %=\n", simple-key);
-            add-new!(node.struct-order, simple-key, test: \=);
-            node.struct-values[simple-key] := new-value;
-            if (instance?(new-value, <struct>) & ~new-value.struct-parent)
-              new-value.struct-parent := node;
-            end;
-          end;
-        end;
-  do-path(key-or-path, struct, node-handler);
+  let node :: <struct> = find-penultimate(key-or-path, struct);
+  let key :: <string> = split(key-or-path, '.')[0];
+  add-new!(node.struct-order, key, test: \=);
+  node.struct-values[key] := new-value;
+  if (instance?(new-value, <struct>) & ~new-value.struct-parent)
+    new-value.struct-parent := node;
+  end;
   new-value
 end method element-setter;
 
 define method remove-key!
     (struct :: <struct>, key-or-path :: <string>) => (present? :: <boolean>)
+  let node :: <struct> = find-penultimate(key-or-path, struct);
+  let key :: <string> = split(key-or-path, '.')[0];
   let present? = #f;
-  local method node-handler (node, simple-key, path)
-          if (path = key-or-path)
-            remove!(node.struct-order, simple-key, test: \=);
-            present? := remove-key!(node.struct-values, simple-key);
-          end;
-        end;
-  do-path(key-or-path, struct, node-handler);
-  present?
+  remove!(node.struct-order, key, test: \=);
+  remove-key!(node.struct-values, key)
 end method remove-key!;
 
 define method key-test
@@ -145,6 +146,7 @@ define method find-root
       struct)
 end;
 
+// TODO(cgay): use unfound() instead
 define constant $internal-unfound = list("iUNFOUND");
 
 /// Synopsis: Retrieve an attribute value from a <struct>.
@@ -158,26 +160,27 @@ define constant $internal-unfound = list("iUNFOUND");
 ///              followed back down to the target.
 ///
 define method element
-    (struct :: <struct>, key :: <string>, #key default = $internal-unfound)
+    (struct :: <struct>, key-or-path :: <string>, #key default = $internal-unfound)
  => (object)
-  let result = default;
-  local method node-handler (node, simple-key, path)
-          if (path = key)
-            add-new!(node.struct-order, simple-key);
-            let val = %element(node, simple-key, default);
-            if (val == $internal-unfound)
-              raise(<key-error>, "Key %s not found.", key);
-            else
-              result := val
-            end;
-          end;
-        end;
-  do-path(key, struct, node-handler);
-  result
+  format-out("element(%=, %=)\n", struct, key-or-path);
+  let node :: <struct> = find-penultimate(key-or-path, struct);
+  format-out("  node = %=\n", node);
+  let path = split(key-or-path, '.');
+  let key = path[path.size - 1];
+  let value = %element(node, key, default);
+  if (value == $internal-unfound)
+    raise(<key-error>, "Key %= not found.", key);
+  else
+    value
+  end
 end method element;
 
 // Gives <struct-prototype> a place to override.  This only handles
-// simple keys.
+// simple keys, not paths.
+define sealed generic %element
+    (struct :: <struct>, key :: <string>, default :: <object>)
+ => (object);
+
 define method %element
     (struct :: <struct>, key :: <string>, default :: <object>)
  => (object)
@@ -205,40 +208,44 @@ define method deep-copy
   end
 end method deep-copy;
 
-// Apply a function to each node in a dotted path.  Ensures that each
-// non-terminal element of the path is a struct and optionally ensures
-// that the terminal element is a struct.
-define method do-path
-    (path :: <string>, struct :: <struct>, node-handler :: <function>,
-     #key require-struct? :: <boolean>)
- => ()
-  iterate loop (parent = struct, elements = as(<list>, split(path, '.')), seen = #())
-    format-out("elements = %s, seen = %s\n", elements, seen);
-    if (~empty?(elements))
+define method find-penultimate
+    (path :: <string>, struct :: <struct>)
+ => (struct :: <struct>)
+  format-out("find-penultimate(%=, %=)\n", path, struct);
+  if (starts-with?(path, "."))
+    // .. = parent, ... = grandparent, etc
+    path := copy-sequence(path, start: 1);  
+  end;
+  iterate loop (current = struct, elements = as(<list>, split(path, '.')), seen = #())
+    format-out("  current = %=, elements = %=, seen = %=\n", current, elements, seen);
+    if (elements.size = 1)
+      format-out("  => %=\n", current);
+      current
+    else
       let simple-key = elements.head;
       let new-seen = pair(simple-key, seen);
-      let value = if (simple-key = "@root")
-                    format-out("  finding root...\n");
-                    iterate find-root (st = parent)
-                      iff(st.struct-parent, find-root(st.struct-parent), st)
-                    end
-                  else
-                    format-out("  calling element on %=\n", simple-key);
-                    // Don't call element(parent, ...) here because it would cause
-                    // infinite recursion.
-                    element(parent.struct-values, simple-key, default: $internal-unfound)
+      let value = select (simple-key by \=)
+                    "@root" =>
+                      iterate find-root (st = current)
+                        iff(st.struct-parent, find-root(st.struct-parent), st)
+                      end;
+                    "" =>   // splitting on '.' removes the dots.
+                      current.struct-parent;
+                    otherwise =>
+                      // Don't call element(current, ...) here because it would cause
+                      // infinite recursion.
+                      %element(current, simple-key, $internal-unfound);
                   end;
       if (value == $internal-unfound)
         raise(<key-error>,
               "Invalid struct path %s: %s does not exist.",
               path, join(reverse(new-seen), "."));
-      elseif ((require-struct? | (elements.size > 1)) & ~instance?(value, <struct>))
+      elseif (~instance?(value, <struct>))
         raise(<key-error>,
               "Invalid struct path %s: %s does not name a struct.",
               path, join(reverse(new-seen), "."));
       end;
-      node-handler(value, simple-key, join(reverse(new-seen), "."));
-      loop(value, elements.tail, new-seen);
-    end;
-  end;
-end method do-path;
+      loop(value, elements.tail, new-seen)
+    end
+  end
+end method find-penultimate;

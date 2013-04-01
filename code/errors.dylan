@@ -11,6 +11,6 @@ end;
 
 
 /// Synopsis: Error finding/setting a struct key.
-define open class <key-error> (<format-string-condition>, <error>)
+define open class <key-error> (<coil-error>)
 end;
 

@@ -138,34 +138,38 @@ end;
 
 define method %parse-coil
     (parser :: <coil-parser>) => (struct :: <struct>)
-  let root = make(<struct-prototype>);
+  let root = make(<struct-prototype>, name: "@root");
   parse-struct-attributes(parser, root);
   // Copy the <struct-prototype> into an actual <struct>, resolving
   // all references.
   let struct = make(<struct>, name: "@root");
   copy-struct-into(root, struct);
   struct
-end;
+end method %parse-coil;
 
 define method parse-struct
-    (parser :: <coil-parser>, name :: <string>) => (struct :: <struct>)
-  let struct = make(<struct-prototype>, name: name);
+    (parser :: <coil-parser>, key :: <string>, parent :: <struct>)
+ => (struct :: <struct>)
+  format-out("parse-struct(%=, %=)\n", key, parent);
+  let new-struct = make(<struct-prototype>, name: key, parent: parent);
   eat-whitespace-and-comments(parser);
   select (parser.lookahead)
     '{' =>
       parser.consume;
-      parse-struct-attributes(parser, struct);
+      parse-struct-attributes(parser, new-struct);
       expect(parser, "}");
     otherwise =>
       parse-error(parser, "Invalid struct.  Expected '{'.");
   end;
-  struct
+  new-struct
 end method parse-struct;
 
 /// Synopsis: Parse the attributes of a struct and add them to the 'struct'
 ///           argument passed in.
 define method parse-struct-attributes
-    (parser :: <coil-parser>, struct :: <struct-prototype>) => (struct :: <struct-prototype>)
+    (parser :: <coil-parser>, struct :: <struct-prototype>)
+ => (struct :: <struct-prototype>)
+  format-out("parse-struct-attributes(%=)\n", struct);
   iterate loop ()
     eat-whitespace-and-comments(parser);
     select (parser.lookahead)
@@ -181,12 +185,13 @@ define method parse-struct-attributes
         parse-special-key(parser, struct);
         loop();
       otherwise =>
-        let key = parse-key(parser, struct);
+        let key-or-path = parse-key(parser, struct);
         expect(parser, "", ":", "");
-        let elements = split(key, '.');
-        let name = elements[elements.size - 1];
-        let value = parse-any(parser, name: name, allow-struct?: #t);
-        struct[key] := value;
+        let elements = split(key-or-path, '.');
+        let key = elements[elements.size - 1];
+        let value = parse-object(parser, key, struct);
+        format-out("parse-struct-attributes: %s[%=] := %=\n", struct, key-or-path, value);
+        struct[key-or-path] := value;
         loop();
     end;
   end iterate;
@@ -196,14 +201,17 @@ end method parse-struct-attributes;
 // Parse @extends or @file.  The '@' has already been consumed.
 define method parse-special-key
     (parser :: <coil-parser>, struct :: <struct-prototype>) => ()
+  format-out("parse-special-key(%=)\n", struct);
   select (parser.lookahead)
     'e' =>
       expect(parser, "extends", ":");
-      let extendee = struct[parse-path(parser)];
-      if (~instance?(extendee, <struct>))
+      let path = parse-path(parser);
+      format-out("processing '@extends: %s', struct = %s\n", path, struct);
+      let source = struct[path];
+      if (~instance?(source, <struct>))
         parse-error(parser, "Target of @extends reference is not a struct.");
       else
-        extend-struct(parser, struct, extendee);
+        extend-struct(parser, struct, source);
       end;
     'f' =>
       expect(parser, "file", ":");
@@ -219,6 +227,7 @@ end method parse-special-key;
 // Extend struct with the values from source.
 define method extend-struct
     (parser :: <coil-parser>, struct :: <struct-prototype>, source :: <struct>) => ()
+  format-out("extend-struct(%=, %=)\n", struct, source);
   for (key in source.struct-order)
     add-new!(struct.secondary-order, key);
     struct.secondary-values[key] := source[key];
@@ -234,7 +243,9 @@ define method parse-file
           parse-error(parser, "Target of @file keyword must be a filename or a "
                         "list of the form [ 'filename' 'path.to.struct' ].");
         end;
-  let target = parse-any(parser, name: "@root", allow-struct?: #t);
+  // Passing allow-struct?: #t here because locally we can give a
+  // better error message.
+  let target = parse-object(parser, "@root", struct);
   let path = "@root";
   select (target by instance?)
     <string> => #f;
@@ -257,13 +268,18 @@ define method parse-file
     file := merge-locators(file, parser.source-locator);
   end;
   let file-struct = parse-coil(file);
-  let extendee = file-struct[path];
-  if (~instance?(extendee, <struct>))
+  let source = file-struct[path];
+  if (~instance?(source, <struct>))
     parse-error(parser, "Target of @file reference is not a struct.");
   else
-    extend-struct(parser, struct, extendee);
+    extend-struct(parser, struct, source);
   end
 end method parse-file;
+
+define method parse-non-struct-object
+    (parser :: <coil-parser>) => (value :: <object>)
+  parse-object(parser, #f, #f)
+end;
 
 /// Synopsis: parse and return any valid coil object.  A struct, list,
 ///           integer, float, string, boolean, or None.  This is used for
@@ -277,9 +293,8 @@ end method parse-file;
 ///         a struct.  #f indicates that this is not called in a struct
 ///         context
 ///
-define method parse-any
-    (parser :: <coil-parser>,
-     #key name :: false-or(<string>), allow-struct? :: <boolean>)
+define method parse-object
+    (parser :: <coil-parser>, key :: false-or(<string>), parent :: false-or(<struct>))
  => (object :: <object>)
   eat-whitespace-and-comments(parser);
   let char = parser.lookahead;
@@ -287,10 +302,10 @@ define method parse-any
     "'\"" =>
       parse-string(parser);
     "{" =>
-      if (~allow-struct?)
-        parse-error(parser, "Structs are not allowed inside of lists.");
+      if (~parent)
+        parse-error(parser, "Token '{' unexpected. Trying put a struct inside a list?");
       end;
-      parse-struct(parser, name);
+      parse-struct(parser, key, parent);
     "[" =>
       parse-list(parser);
     "-0123456789" =>
@@ -313,7 +328,7 @@ define method parse-any
     otherwise =>
       parse-error(parser, "Unexpected input starting with %=.", char);
   end select
-end method parse-any;
+end method parse-object;
 
 /// Synopsis: Return the next unread input character, or #f if at end.
 define method lookahead
@@ -475,7 +490,7 @@ define method parse-list
   iterate loop ()
     eat-whitespace-and-comments(parser);
     if (parser.lookahead ~= ']')
-      add!(list, parse-any(parser, allow-struct?: #f));
+      add!(list, parse-non-struct-object(parser));
       loop()
     end
   end;

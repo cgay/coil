@@ -43,8 +43,6 @@ end;
 
 define test test-single ()
   let struct = parse-coil("this: 'that'");
-  write-coil(*standard-output*, struct);
-  force-output(*standard-output*);
   check-equal("size = 1", struct.size, 1);
   check-equal("this = 'that'", struct["this"], "that");
 end;
@@ -65,6 +63,7 @@ end;
 
 define test test-extends-basic ()
   let struct = parse-coil("a: {x: 7} b: { @extends: ..a }");
+  format-out("parsed it\n");
   check-equal("basic @extend test", struct["b.x"], 7);
 end;
 
