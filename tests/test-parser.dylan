@@ -27,6 +27,7 @@ define suite basic-suite ()
   test test-whitespace;
   test test-comments;
   test test-parse-error;
+  test test-key-error;
   test test-string;
   test test-list;
   test test-nested-list;
@@ -58,7 +59,7 @@ define test test-many ()
   check-equal("int = 37", struct["int"], 37);
 
   check-instance?("float is a float", <float>, struct["float"]);
-  check-equal("float = 2.4", struct["float"], 2.4);
+  check-equal("float = 2.4", struct["float"], 2.4d0);
 end;
 
 define test test-extends-basic ()
@@ -121,30 +122,37 @@ define test test-parse-error ()
         "a: b:",
         ":",
         "[]",
-        "a: ~b",
         "@x: 2",
         "x: 12c",
         "x: 12.c3",
-        "x: @root",
-        "x: ..a",
         "z: [{x: 2}]",            // can't have struct in list
         "z: \"lalalal \\\"",      // string is not closed
         "a: 1 z: [ =@root.a ]",
-        "a: {@extends: @root.b}", // b doesn't exist
-        "a: {@extends: ..b}",     // b doesn't exist
-        "a: {@extends: x}",
         "a: {@extends: .}",
         "a: 1 b: { @extends: ..a }", // extend struct only
         "a: { @extends: ..a }",      // extend self
         "a: { b: {} @extends: b }",     // extend children
         "a: { b: { @extends: ...a } }", // extend parents
-        "a: [1 2 3]]"
-        ))
+        "a: [1 2 3]]"))
     check-condition(format-to-string("%= gets parse error", coil),
                     <coil-parse-error>,
                     parse-coil(coil));
   end;
 end test test-parse-error;
+
+define test test-key-error ()
+  for (coil in vector(
+        "a: ~b",
+        "x: @root",
+        "x: ..a",
+        "a: {@extends: @root.b}", // b doesn't exist
+        "a: {@extends: ..b}",     // b doesn't exist
+        "a: {@extends: x}"))
+    check-condition(format-to-string("%= gets key error", coil),
+                    <key-error>,
+                    parse-coil(coil));
+  end;
+end test test-key-error;
 
 // We don't support =a, which this seems to test.
 //define test test-order ()
