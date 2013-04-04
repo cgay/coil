@@ -116,24 +116,23 @@ define test test-comments ()
 end;
 
 define test test-parse-error ()
-  for (coil in vector(
-        "struct: {",
-        "struct: }",
-        "a: b:",
-        ":",
-        "[]",
-        "@x: 2",
-        "x: 12c",
-        "x: 12.c3",
-        "z: [{x: 2}]",            // can't have struct in list
-        "z: \"lalalal \\\"",      // string is not closed
-        "a: 1 z: [ =@root.a ]",
-        "a: {@extends: .}",
-        "a: 1 b: { @extends: ..a }", // extend struct only
-        "a: { @extends: ..a }",      // extend self
-        "a: { b: {} @extends: b }",     // extend children
-        "a: { b: { @extends: ...a } }", // extend parents
-        "a: [1 2 3]]"))
+  for (coil in vector("struct: {",
+                      "struct: }",
+                      "a: b:",
+                      ":",
+                      "[]",
+                      "@x: 2",
+                      "x: 12c",
+                      "x: 12.c3",
+                      "z: [{x: 2}]",            // can't have struct in list
+                      "z: \"lalalal \\\"",      // string is not closed
+                      "a: 1 z: [ =@root.a ]",
+                      "a: {@extends: .}",
+                      "a: 1 b: { @extends: ..a }", // extend struct only
+                      // Not sure why this one was in the Python version test suite.
+                      // Seems legit to me given that @extends must copy b.
+                      "a: { b: {} @extends: b }",     // extend children
+                      "a: [1 2 3]]"))
     check-condition(format-to-string("%= gets parse error", coil),
                     <coil-parse-error>,
                     parse-coil(coil));
@@ -141,13 +140,14 @@ define test test-parse-error ()
 end test test-parse-error;
 
 define test test-key-error ()
-  for (coil in vector(
-        "a: ~b",
-        "x: @root",
-        "x: ..a",
-        "a: {@extends: @root.b}", // b doesn't exist
-        "a: {@extends: ..b}",     // b doesn't exist
-        "a: {@extends: x}"))
+  for (coil in vector("a: ~b",
+                      "x: @root",
+                      "x: ..a",
+                      "a: {@extends: @root.b}",
+                      "a: {@extends: ..b}",
+                      "a: { @extends: ..a }",
+                      "a: { b: { @extends: ...a } }",
+                      "a: {@extends: x}"))
     check-condition(format-to-string("%= gets key error", coil),
                     <key-error>,
                     parse-coil(coil));
