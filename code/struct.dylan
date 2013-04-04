@@ -97,8 +97,7 @@ end;
 define method element-setter
     (new-value :: <object>, struct :: <struct>, key-or-path :: <string>)
  => (new-value :: <object>)
-  let node :: <struct> = find-penultimate(key-or-path, struct);
-  let key :: <string> = split(key-or-path, '.')[0];
+  let (node :: <struct>, key :: <string>) = find-penultimate(key-or-path, struct);
   add-new!(node.struct-order, key, test: \=);
   node.struct-values[key] := new-value;
   if (instance?(new-value, <struct>) & ~new-value.struct-parent)
@@ -109,8 +108,7 @@ end method element-setter;
 
 define method remove-key!
     (struct :: <struct>, key-or-path :: <string>) => (present? :: <boolean>)
-  let node :: <struct> = find-penultimate(key-or-path, struct);
-  let key :: <string> = split(key-or-path, '.')[0];
+  let (node :: <struct>, key :: <string>) = find-penultimate(key-or-path, struct);
   let present? = #f;
   remove!(node.struct-order, key, test: \=);
   remove-key!(node.struct-values, key)
@@ -163,10 +161,8 @@ define method element
     (struct :: <struct>, key-or-path :: <string>, #key default = $internal-unfound)
  => (object)
   format-out("element(%=, %=)\n", struct, key-or-path);
-  let node :: <struct> = find-penultimate(key-or-path, struct);
+  let (node :: <struct>, key :: <string>) = find-penultimate(key-or-path, struct);
   format-out("  node = %=\n", node);
-  let path = split(key-or-path, '.');
-  let key = path[path.size - 1];
   let value = %element(node, key, default);
   if (value == $internal-unfound)
     raise(<key-error>, "Key %= not found.", key);
@@ -210,7 +206,7 @@ end method deep-copy;
 
 define method find-penultimate
     (path :: <string>, struct :: <struct>)
- => (struct :: <struct>)
+ => (struct :: <struct>, simple-key :: <string>)
   format-out("find-penultimate(%=, %=)\n", path, struct);
   if (starts-with?(path, "."))
     // .. = parent, ... = grandparent, etc
@@ -218,9 +214,9 @@ define method find-penultimate
   end;
   iterate loop (current = struct, elements = as(<list>, split(path, '.')), seen = #())
     format-out("  current = %=, elements = %=, seen = %=\n", current, elements, seen);
-    if (elements.size = 1)
+    if (empty?(elements.tail))
       format-out("  => %=\n", current);
-      current
+      values(current, elements.head)
     else
       let simple-key = elements.head;
       let new-seen = pair(simple-key, seen);

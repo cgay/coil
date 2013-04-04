@@ -69,8 +69,12 @@ end;
 
 define method copy-struct-into
     (source :: <struct-prototype>, target :: <struct>) => ()
-  // Copy secondary items in first, excluding those that are overridden
-  // by items explicitly set for this struct, rather than inherited.
+  // Copy secondary items in first, excluding deleted items and those
+  // that are overridden by items explicitly set for this struct,
+  // rather than inherited.
+
+  format-out("copy-struct-into(%=, %=)\n", source, target);
+  format-out("  source.deleted-keys = %=\n", source.deleted-keys);
 
   // TODO(cgay): This gets the order wrong if @extends or @file
   // wasn't the first thing in the struct!  Enforce that?  Also
@@ -85,13 +89,17 @@ define method copy-struct-into
   end;
   for (key in source.struct-order)
     let value = source.struct-values[key];
-    format-out("copying primary %= = %=\n", key, value);
-    target[key] := select (value by instance?)
-                     <struct> =>
-                       let st = make(<struct>);
-                       copy-struct-into(value, st);
-                       st;
-                     otherwise => value;
-                   end;
+    if (~member?(key, source.deleted-keys, test: \=))
+      format-out("copying primary %= = %=\n", key, value);
+      target[key] := select (value by instance?)
+                       <struct> =>
+                         let st = make(<struct>,
+                                       name: value.struct-name,
+                                       parent: target);
+                         copy-struct-into(value, st);
+                         st;
+                       otherwise => value;
+                     end;
+    end;
   end;
 end method copy-struct-into;

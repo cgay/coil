@@ -177,8 +177,7 @@ define method parse-struct-attributes
         #f;  // done
       '~' =>
         parser.consume;
-        let path :: <string> = parse-path(parser);
-        remove-key!(struct, path);
+        parse-deletion(parser, struct);
         loop();
       '@' =>
         parser.consume;
@@ -197,6 +196,20 @@ define method parse-struct-attributes
   end iterate;
   struct
 end method parse-struct-attributes;
+
+// Parse ~key.  The '~' has just been consumed.
+define method parse-deletion
+    (parser :: <coil-parser>, struct :: <struct-prototype>) => ()
+  let path :: <string> = parse-path(parser);
+  let (node :: <struct-prototype>, key :: <string>) = find-penultimate(path, struct);
+  // Adding to deleted-keys prevents inheriting this key/value from
+  // secondary-* when the prototype is copied into a struct.
+  add-new!(node.deleted-keys, key);
+  if (member?(key, node.struct-order, test: \=))
+    remove!(key, node.struct-order, test: \=);
+    remove-key!(key, node.struct-values);
+  end;
+end method parse-deletion;
 
 // Parse @extends or @file.  The '@' has already been consumed.
 define method parse-special-key
