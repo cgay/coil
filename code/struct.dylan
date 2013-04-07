@@ -207,15 +207,15 @@ end method deep-copy;
 define method find-penultimate
     (path :: <string>, struct :: <struct>)
  => (struct :: <struct>, simple-key :: <string>)
-  format-out("find-penultimate(%=, %=)\n", path, struct);
+  //format-out("find-penultimate(%=, %=)\n", path, struct);
   if (starts-with?(path, "."))
     // .. = parent, ... = grandparent, etc
     path := copy-sequence(path, start: 1);  
   end;
   iterate loop (current = struct, elements = as(<list>, split(path, '.')), seen = #())
-    format-out("  current = %=, elements = %=, seen = %=\n", current, elements, seen);
+    //format-out("  current = %=, elements = %=, seen = %=\n", current, elements, seen);
     if (empty?(elements.tail))
-      format-out("  => %=\n", current);
+      //format-out("  => %=\n", current);
       values(current, elements.head)
     else
       let simple-key = elements.head;
@@ -245,3 +245,125 @@ define method find-penultimate
     end
   end
 end method find-penultimate;
+
+
+//// Struct prototypes
+
+/// Synopsis: A temporary struct used for parsing only.  This Struct
+/// tracks links and inheritance so they can be processed when parsing
+/// is all done. This is important because it allows us to do fancy
+/// things with inheritance and catch errors during parse-time rather
+/// than run-time.
+define class <struct-prototype> (<struct>)
+  // Secondary items are ones that are inherited via @extends or @file
+  // They must be tracked separately so we can raise errors on
+  // double adds and deletes in the primary values.
+  constant slot secondary-values :: <string-table> = make(<string-table>);
+  constant slot secondary-order :: <stretchy-vector> = make(<stretchy-vector>);
+
+  // Keys that were deleted in this struct by ~foo tokens.
+  constant slot deleted-keys :: <stretchy-vector> = make(<stretchy-vector>);
+end class <struct-prototype>;
+
+define method class-name
+    (struct :: <struct-prototype>) => (name :: <string>)
+  "struct-prototype"
+end;
+
+// Look up a simple key (not a path).  Locally set values (i.e.,
+// values set in the <struct> superclass) take precedence but if not
+// found then look at inherited values (unless locally deleted).
+define method %element
+    (struct :: <struct-prototype>, key :: <string>, default :: <object>)
+ => (object)
+  if (member?(key, struct.deleted-keys, test: \=))
+    default
+  else
+    let value = next-method();
+    if (value == $internal-default)
+      element(struct.secondary-values, key, default: default)
+    else
+      value
+    end
+  end
+end method %element;
+
+define method size
+    (struct :: <struct-prototype>) => (size :: <integer>)
+  let all-keys = union(struct.struct-order, struct.secondary-order, test: \=);
+  all-keys.size - intersection(all-keys, struct.deleted-keys, test: \=).size
+end;
+
+// Copy the source struct as either a <struct> or <struct-prototype>.
+// Any sub-structs are also copied as the specified class.  There is
+// no provision for copying a <struct> to a <struct-prototype> since
+// that's not needed here.
+define generic copy-struct-as
+    (class :: subclass(<struct>), source :: <struct>, #key parent)
+ => (new-struct :: <struct>);
+
+define generic copy-struct-values-as
+    (class :: subclass(<struct>), source :: <struct>, target :: <struct>)
+ => ();
+
+define method copy-struct-as
+    (class :: subclass(<struct>), source :: <struct>, #key parent :: false-or(<struct>))
+ => (new-struct :: <struct>)
+  format-out("copy-struct-as(%=, %=\n", class, source);
+  let target = make(class,
+                    name: source.struct-name,
+                    parent: parent | source.struct-parent);
+  copy-struct-values-as(class, source, target);
+  target
+end method copy-struct-as;
+
+define method copy-struct-values-as
+    (class :: subclass(<struct>), source :: <struct>, target :: <struct>) => ()
+  format-out("copy-struct-values-as(%=, %=, %=\n", class, source, target);
+  for (key in source.struct-order)
+    let value = source.struct-values[key];
+    format-out("  copying primary %= = %=\n", key, value);
+    target[key] := select (value by instance?)
+                     <struct> => copy-struct-as(class, value, parent: target);
+                     otherwise => value;
+                   end;
+  end;
+end method copy-struct-values-as;
+
+define method copy-struct-values-as
+    (class :: subclass(<struct>), source :: <struct-prototype>, target :: <struct-prototype>)
+ => ()
+  // Copy secondary items in first, excluding deleted items and those
+  // that are overridden by items explicitly set for this struct,
+  // rather than inherited.
+
+  format-out("copy-struct-values-as(%=, %=, %=)\n", class, source, target);
+  format-out("  source.deleted-keys = %=\n", source.deleted-keys);
+
+  // TODO(cgay): This gets the order wrong if @extends or @file
+  // wasn't the first thing in the struct!  Enforce that?  Also
+  // might want to note in the docs that order isn't defined for
+  // multiple @s in the same struct.
+  for (key in source.secondary-order)
+    let value = source.secondary-values[key];
+    if (~member?(key, source.deleted-keys, test: \=)
+          & ~member?(key, source.struct-order, test: \=))
+      format-out("  copying secondary %= = %=\n", key, value);
+      target[key] := value;
+    else
+      format-out("  NOT copying secondary %= = %=\n", key, value);
+    end;
+  end;
+  for (key in source.struct-order)
+    let value = source.struct-values[key];
+    if (~member?(key, source.deleted-keys, test: \=))
+      format-out("  copying primary %= = %=\n", key, value);
+      target[key] := select (value by instance?)
+                       <struct> => copy-struct-as(class, value, parent: target);
+                       otherwise => value;
+                     end;
+    else
+      format-out("  NOT copying primary %= = %=\n", key, value);
+    end;
+  end;
+end method copy-struct-values-as;

@@ -142,9 +142,7 @@ define method %parse-coil
   parse-struct-attributes(parser, root);
   // Copy the <struct-prototype> into an actual <struct>, resolving
   // all references.
-  let struct = make(<struct>, name: "@root");
-  copy-struct-into(root, struct);
-  struct
+  copy-struct-as(<struct>, root)
 end method %parse-coil;
 
 define method parse-struct
@@ -237,13 +235,20 @@ define method parse-special-key
   end select
 end method parse-special-key;
 
-// Extend struct with the values from source.
+// Extend struct with the values from source.  Copy and struct values so that
+// they can be locally modified without affecting the original source.
 define method extend-struct
     (parser :: <coil-parser>, struct :: <struct-prototype>, source :: <struct>) => ()
   format-out("extend-struct(%=, %=)\n", struct, source);
   for (key in source.struct-order)
     add-new!(struct.secondary-order, key);
-    struct.secondary-values[key] := source[key];
+    let value = source[key];
+    let copied-value = if (instance?(value, <struct>))
+                         copy-struct-as(<struct-prototype>, value, parent: struct)
+                       else
+                         value
+                       end;
+    struct.secondary-values[key] := copied-value;
   end;
 end method extend-struct;
 
