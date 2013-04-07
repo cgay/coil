@@ -7,3 +7,6 @@
 [submodule "submodules/monday"]
 	path = submodules/monday
 	url = git@github.com:dylan-lang/monday
+[submodule "submodules/strings"]
+	path = submodules/strings
+	url = git@github.com:dylan-lang/strings
