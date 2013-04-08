@@ -12,6 +12,8 @@ define library coil-test-suite
   use testworks;
   use coil;
   use regular-expressions;
+
+  export coil-test-suite;
 end library coil-test-suite;
 
 define module coil-test-suite
@@ -27,5 +29,6 @@ define module coil-test-suite
   use standard-io;
   use streams;
   use testworks;
+  export coil-test-suite;
 end module coil-test-suite;
 
