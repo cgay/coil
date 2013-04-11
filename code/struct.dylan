@@ -331,13 +331,13 @@ define method copy-struct-values-as
 end method copy-struct-values-as;
 
 define method copy-struct-values-as
-    (class :: subclass(<struct>), source :: <struct-prototype>, target :: <struct-prototype>)
+    (class :: subclass(<struct>), source :: <struct-prototype>, target :: <struct>)
  => ()
   // Copy secondary items in first, excluding deleted items and those
   // that are overridden by items explicitly set for this struct,
   // rather than inherited.
 
-  format-out("copy-struct-values-as(%=, %=, %=)\n", class, source, target);
+  format-out("copy-struct-values-as/p(%=, %=, %=)\n", class, source, target);
   format-out("  source.deleted-keys = %=\n", source.deleted-keys);
 
   // TODO(cgay): This gets the order wrong if @extends or @file
@@ -349,7 +349,10 @@ define method copy-struct-values-as
     if (~member?(key, source.deleted-keys, test: \=)
           & ~member?(key, source.struct-order, test: \=))
       format-out("  copying secondary %= = %=\n", key, value);
-      target[key] := value;
+      target[key] := select (value by instance?)
+                       <struct> => copy-struct-as(class, value, parent: target);
+                       otherwise => value;
+                     end;
     else
       format-out("  NOT copying secondary %= = %=\n", key, value);
     end;
