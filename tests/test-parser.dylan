@@ -70,12 +70,12 @@ end;
 
 // Can refer to other values by path references?
 define test test-references ()
-  let st = parse-coil("a: { m: 5 n: { x: ...b } } "
-                        "b: 6 "
-                        "c: @root.a.n.x "
-                        "d: a.m");
-  check-equal("1", st["a.m.n.x"], 6);
-  check-equal("2", st["b"], 6);
+  let st = parse-coil("a: 6 "
+                        "b: { m: 5 n: { x: ...a } } "
+                        "c: @root.b.n.x "
+                        "d: b.m");
+  check-equal("2", st["a"], 6);
+  check-equal("1", st["b.n.x"], 6);
   check-equal("3", st["c"], 6);
   check-equal("4", st["d"], 5);
 end;

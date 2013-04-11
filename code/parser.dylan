@@ -316,36 +316,37 @@ define method parse-object
  => (object :: <object>)
   eat-whitespace-and-comments(parser);
   let char = parser.lookahead;
-  select (char by member?)
-    "'\"" =>
+  case
+    member?(char, "'\"") =>
       parse-string(parser);
-    "{" =>
+    char == '{' =>
       if (~parent)
         parse-error(parser, "Token '{' unexpected. Trying put a struct inside a list?");
       end;
       parse-struct(parser, key, parent);
-    "[" =>
+    char == '[' =>
       parse-list(parser);
-    "-0123456789" =>
+    member?(char, "-0123456789") =>
       parse-number(parser);
     // TODO: These three aren't right because they could be TrueXXX etc.
     //       That's one reason a real tokenizer separate from the parser
     //       would be better.
-    "T" =>
+    looking-at?(parser, "True") =>
       expect(parser, "True");
       #t;
-    "F" =>
+    looking-at?(parser, "False") =>
       expect(parser, "False");
       #f;
-    "N" =>
+    looking-at?(parser, "None") =>
       expect(parser, "None");
       $none;
-    ".@" =>
-      // TODO(cgay): fix this to return the target of the path
-      parse-path(parser);
+    looking-at?(parser, "..") & ~parent =>
+      parse-error(parser, "Relative path not inside struct.");
     otherwise =>
-      parse-error(parser, "Unexpected input starting with %=.", char);
-  end select
+      let path = parse-path(parser);
+      let (node, key) = find-penultimate(path, parent);
+      node[key];
+  end case
 end method parse-object;
 
 /// Synopsis: Return the next unread input character, or #f if at end.
@@ -395,6 +396,13 @@ define method expect
     eat-whitespace(parser);
   end;
 end method expect;
+
+define method looking-at?
+    (parser :: <coil-parser>, text :: <string>) => (_ :: <boolean>)
+  iterate loop (i = 0)
+    (i < text.size) & (lookahead(parser, offset: i) = text[i]) & loop(i + 1)
+  end
+end;
 
 define method eat-whitespace-and-comments
     (parser :: <coil-parser>) => ()
